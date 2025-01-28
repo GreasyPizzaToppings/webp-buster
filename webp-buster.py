@@ -22,7 +22,7 @@ class WebpHandler(FileSystemEventHandler):
     def on_created(self, event):
         if (not event.is_directory and 
             event.src_path.lower().endswith(".webp") and 
-            "$RECYCLE.BIN" not in event.src_path):
+            ("$Recycle.Bin" or "$RECYCLE.BIN") not in event.src_path):
             self.convert_and_delete(event.src_path)
 
     def convert_and_delete(self, webp_path):
