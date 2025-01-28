@@ -119,11 +119,14 @@ def monitor_system(paths_to_monitor, pre_conversion_path=None, recursive_mode=Fa
             webp_handler = WebpHandler(None, recursive_mode, pre_conversion_path)
             webp_handler.find_and_convert_existing_webps(pre_conversion_path)
     
-    # Monitor paths (drives or specified paths)
+    # Validate and monitor paths (drives or specified paths)
     for path in paths_to_monitor:
         try:
             if not os.path.exists(path):
                 logger.error(f"Path does not exist: {path}")
+                continue
+            elif not os.path.isdir(path):
+                logger.error(f"Path is not a directory: {path}")
                 continue
 
             observer = Observer()
@@ -133,6 +136,7 @@ def monitor_system(paths_to_monitor, pre_conversion_path=None, recursive_mode=Fa
             observer.start()
             observers.append(observer)
             logger.info(f"Successfully monitoring {path}")
+            
         except PermissionError as e:
             logger.error(f"Permission error monitoring {path}: {e}")
         except Exception as e:
