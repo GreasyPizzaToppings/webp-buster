@@ -136,7 +136,7 @@ def monitor_system(paths_to_monitor, pre_conversion_path=None, recursive_mode=Fa
             observer.start()
             observers.append(observer)
             logger.info(f"Successfully monitoring {path}")
-            
+
         except PermissionError as e:
             logger.error(f"Permission error monitoring {path}: {e}")
         except Exception as e:
@@ -174,10 +174,17 @@ def shutdown_observers(observers, _signum=None, _frame=None):
     sys.exit(0)
 
 
+def normalize_path(path):
+    """Normalize path to handle Windows paths with forward/backward slashes and trailing slashes"""
+    # Strip trailing slashes and normalize slashes
+    path = os.path.normpath(path.strip())
+    return path
+
+
 def main():
     parser = argparse.ArgumentParser(description='WebP to PNG Converter')
-    parser.add_argument('-d', '--deep', help='Directory to pre-convert WebP files', type=str)
-    parser.add_argument('paths', nargs='*', help='Paths to monitor (optional)')
+    parser.add_argument('-d', '--deep', help='Directory to pre-convert WebP files', type=normalize_path)
+    parser.add_argument('paths', nargs='*', help='Paths to monitor (optional)', type=normalize_path)
     
     args = parser.parse_args()
 
