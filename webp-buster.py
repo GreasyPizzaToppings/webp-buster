@@ -54,7 +54,8 @@ class WebpHandler(FileSystemEventHandler):
             
             os.remove(webp_path)
             self.processed_files.add(webp_path)
-            self.logger.info(f"Converted: {webp_path} -> {png_path}")
+            # log just the filename for the output file
+            self.logger.info(f"Converted: {webp_path} -> {os.path.basename(png_path)}")
         
         except Exception as e:
             self.logger.error(
@@ -96,6 +97,7 @@ def setup_logging():
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s: %(message)s',
+        datefmt='%d-%m-%Y %H:%M',  # exclude seconds and milliseconds
         handlers=[
             logging.FileHandler(log_file),
             logging.StreamHandler()
