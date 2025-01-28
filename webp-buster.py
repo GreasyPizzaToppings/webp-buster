@@ -184,9 +184,28 @@ def normalize_path(path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='WebP to PNG Converter')
-    parser.add_argument('-d', '--deep', help='Directory to pre-convert WebP files', type=normalize_path)
-    parser.add_argument('paths', nargs='*', help='Paths to monitor (optional)', type=normalize_path)
+    parser = argparse.ArgumentParser(
+        description='WebP to PNG Converter - Monitors directories and automatically converts WebP files to PNG format',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  webp-buster.py                     # Monitor all drives for new WebP files
+  webp-buster.py /dir1 /dir2 ...     # Monitor specific directories
+  webp-buster.py -f /path/to/dir     # Flush out (convert) existing WebP files in directory, then monitor all drives
+        """
+    )
+    parser.add_argument(
+        '-f', '--flush', 
+        help='First flush out (convert) all existing WebP files in the specified directory before monitoring the specified paths.',
+        type=normalize_path,
+        metavar='DIR'
+    )
+    parser.add_argument(
+        'paths', 
+        nargs='*', 
+        help='Paths to monitor for new WebP files (if none specified, monitors all drives)',
+        type=normalize_path
+    )
     
     args = parser.parse_args()
 
@@ -197,10 +216,10 @@ def main():
     
     observers = monitor_system(
         paths_to_monitor, 
-        pre_conversion_path=args.deep, 
-        recursive_mode=bool(args.deep)
+        pre_conversion_path=args.flush, 
+        recursive_mode=bool(args.flush)  
     )
-    
+
     signal.signal(signal.SIGINT, lambda sig, frame: shutdown_observers(observers, sig, frame))
     
     try:
