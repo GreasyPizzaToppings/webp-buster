@@ -189,9 +189,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  webp-buster.py                     # Monitor all drives for new WebP files
-  webp-buster.py /dir1 /dir2 ...     # Monitor specific directories
-  webp-buster.py -f /path/to/dir     # Flush out (convert) existing WebP files in directory, then monitor all drives
+  webp-buster.py                        # Monitor all drives for new WebP files
+  webp-buster.py /dir1 /dir2 ...        # Monitor specific directories
+  webp-buster.py -f /path/to/dir        # Flush out (convert) existing WebP files in directory, then monitor all drives
+  webp-buster.py -f /dir1 /dir2 /dir3   # Flush out (convert) existing WebP files in dir1, then monitor dir2 and dir3
         """
     )
     parser.add_argument(
