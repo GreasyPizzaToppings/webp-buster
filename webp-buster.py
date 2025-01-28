@@ -1,3 +1,4 @@
+#! python
 import os
 import sys
 import time
@@ -106,10 +107,17 @@ def monitor_system(paths_to_monitor, pre_conversion_path=None, recursive_mode=Fa
     observers = []
     logger = logging.getLogger(__name__)
     
-    # Perform pre-conversion on specified path if provided
+    # Validate pre-conversion path if provided
     if pre_conversion_path:
-        webp_handler = WebpHandler(None, recursive_mode, pre_conversion_path)
-        webp_handler.find_and_convert_existing_webps(pre_conversion_path)
+        if not os.path.exists(pre_conversion_path):
+            logger.error(f"Pre-conversion path does not exist: {pre_conversion_path}")
+            sys.exit(1)
+        elif not os.path.isdir(pre_conversion_path):
+            logger.error(f"Pre-conversion path is not a directory: {pre_conversion_path}")
+            sys.exit(1)
+        else:
+            webp_handler = WebpHandler(None, recursive_mode, pre_conversion_path)
+            webp_handler.find_and_convert_existing_webps(pre_conversion_path)
     
     # Monitor paths (drives or specified paths)
     for path in paths_to_monitor:
@@ -129,16 +137,38 @@ def monitor_system(paths_to_monitor, pre_conversion_path=None, recursive_mode=Fa
             logger.error(f"Permission error monitoring {path}: {e}")
         except Exception as e:
             logger.error(f"Detailed error monitoring {path}: {e}")
-    
+
+    if not observers:
+        logger.error("No valid paths to monitor. Shutting down.")
+        sys.exit(1)
+
     return observers
 
-def signal_handler(observers, sig, frame):
+
+def shutdown_observers(observers, _signum=None, _frame=None):
+    """Gracefully stop all filesystem observers and exit the program.
+    
+    Args:
+        observers: List of Observer objects to stop
+        _signum: Unused signal number (required by signal handler signature)
+        _frame: Unused current stack frame (required by signal handler signature)
+    """
     logger = logging.getLogger(__name__)
-    logger.info("\nStopping monitoring...")
+    logger.info("Shutting down monitoring...")
+    
     for observer in observers:
-        observer.stop()
-        observer.join()
+        try:
+            if observer.is_alive():
+                observer.stop()
+                observer.join(timeout=5)
+                if observer.is_alive():
+                    logger.warning(f"Observer for {observer.paths} didn't terminate cleanly")
+        except Exception as e:
+            logger.error(f"Error stopping observer: {e}")
+    
+    logger.info("Clean shutdown complete")
     sys.exit(0)
+
 
 def main():
     parser = argparse.ArgumentParser(description='WebP to PNG Converter')
@@ -149,7 +179,7 @@ def main():
 
     setup_logging()
     
-    # Determine paths to monitor
+    # monitor specified paths only when specified, otherwise monitor all drives
     paths_to_monitor = args.paths if args.paths else get_available_drives()
     
     observers = monitor_system(
@@ -158,13 +188,14 @@ def main():
         recursive_mode=bool(args.deep)
     )
     
-    signal.signal(signal.SIGINT, lambda sig, frame: signal_handler(observers, sig, frame))
+    signal.signal(signal.SIGINT, lambda sig, frame: shutdown_observers(observers, sig, frame))
     
     try:
         while True:
             time.sleep(5)
+    # backup shutdown mechanism
     except KeyboardInterrupt:
-        signal_handler(observers, None, None)
+        shutdown_observers(observers, None, None)
 
 if __name__ == "__main__":
     main()
