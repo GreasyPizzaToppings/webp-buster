@@ -54,8 +54,15 @@ class WebpHandler(FileSystemEventHandler):
             
             os.remove(webp_path)
             self.processed_files.add(webp_path)
+            
             # log just the filename for the output file
-            self.logger.info(f"Converted: {webp_path} -> {os.path.basename(png_path)}")
+            try:
+                log_message = f"Converted: {webp_path} -> {os.path.basename(png_path)}"
+                self.logger.info(log_message)
+            except UnicodeEncodeError:
+                # Fallback to ASCII representation if Unicode fails
+                log_message = f"Converted: {webp_path.encode('ascii', 'replace').decode()} -> {os.path.basename(png_path).encode('ascii', 'replace').decode()}"
+                self.logger.info(log_message)
         
         except Exception as e:
             self.logger.error(
@@ -90,20 +97,37 @@ def get_available_drives():
     return drives
 
 def setup_logging():
+    """Set up logging with proper Unicode support."""
     log_dir = os.path.join(os.path.expanduser('~'), 'WebP_Converter_Logs')
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, 'webp_converter.log')
     
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s: %(message)s',
-        datefmt='%d-%m-%Y %H:%M',  # exclude seconds and milliseconds
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler()
-        ]
-    )
-    return logging.getLogger(__name__)
+    # Create a UTF-8 file handler
+    file_handler = logging.FileHandler(log_file, 'a', encoding='utf-8')
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(levelname)s: %(message)s',
+        datefmt='%d-%m-%Y %H:%M'
+    ))
+    
+    # Create a stream handler that can handle Unicode
+    # Force UTF-8 encoding for Windows console
+    if os.name == 'nt':  # Windows
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(levelname)s: %(message)s',
+        datefmt='%d-%m-%Y %H:%M'
+    ))
+    
+    # Set up the root logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    logger.addHandler(file_handler)
+    logger.addHandler(stream_handler)
+    
+    return logger
 
 def monitor_system(paths_to_monitor, pre_conversion_path=None, recursive_mode=False):
     observers = []
