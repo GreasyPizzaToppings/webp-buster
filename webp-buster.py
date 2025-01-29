@@ -6,7 +6,6 @@ import signal
 import logging
 import string
 import ctypes
-import shlex
 import argparse
 from PIL import Image
 from watchdog.observers import Observer
@@ -20,9 +19,32 @@ class WebpHandler(FileSystemEventHandler):
         self.logger = logging.getLogger(__name__)
 
     def on_created(self, event):
+        # Convert path to lowercase for case-insensitive comparison
+        path_lower = event.src_path.lower()
+        
+        # Define system and temporary folders to ignore
+        system_folders = {
+            "$recycle.bin",    # Windows Recycle Bin
+            "system volume information",  # Windows System folder
+            "temp",            # Temporary files
+            "$windows.~ws",    # Windows Update folder
+            "windowsapps",     # Windows Store apps
+            "appdata",         # Application Data
+            "$windows.~bt",    # Windows backup files
+            "programdata",     # Program Data
+            "$windows.old",    # Old Windows installation
+            ".tmp",            # Temporary files
+            "thumbs.db",       # Windows thumbnail cache
+            "desktop.ini"      # Windows folder settings
+        }
+        
+        # Check if file is not in system folders and is a webp file
         if (not event.is_directory and 
-            event.src_path.lower().endswith(".webp") and 
-            ("$Recycle.Bin" or "$RECYCLE.BIN") not in event.src_path):
+            path_lower.endswith(".webp") and 
+            not any(folder in path_lower for folder in system_folders)):
+            
+            # Log the file being processed (useful for debugging)
+            self.logger.debug(f"Processing file: {event.src_path}")
             self.convert_and_delete(event.src_path)
 
     def sanitize_filename(self, filename):
