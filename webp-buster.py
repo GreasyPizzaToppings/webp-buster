@@ -25,12 +25,64 @@ class WebpHandler(FileSystemEventHandler):
             ("$Recycle.Bin" or "$RECYCLE.BIN") not in event.src_path):
             self.convert_and_delete(event.src_path)
 
+    def sanitize_filename(self, filename):
+        """
+        Remove or replace problematic characters in filenames while preserving Unicode.
+        
+        Args:
+            filename (str): Original filename
+            
+        Returns:
+            str: Sanitized filename with problematic characters replaced
+        """
+        # Define characters that are problematic for filesystems
+        problematic = {
+            '\0': '',       # Null byte
+            '/': '_',       # Forward slash
+            '\\': '_',      # Back slash
+            '<': '(',       # Less than
+            '>': ')',       # Greater than
+            ':': '-',       # Colon
+            '"': "'",       # Double quote
+            '|': '-',       # Pipe
+            '?': '',        # Question mark
+            '*': '',        # Asterisk
+            '\n': ' ',      # Newline
+            '\r': ' ',      # Carriage return
+            '\t': ' ',      # Tab
+        }
+        
+        # Replace problematic characters
+        for bad, good in problematic.items():
+            filename = filename.replace(bad, good)
+        
+        # Remove leading/trailing spaces and dots
+        filename = filename.strip('. ')
+        
+        # Ensure filename isn't empty after sanitization
+        if not filename:
+            filename = 'unnamed'
+        
+        return filename
+
     def convert_and_delete(self, webp_path):
         if webp_path in self.processed_files:
             return
         try:
             time.sleep(0.5)
-            png_path = os.path.splitext(webp_path)[0] + ".png"
+            
+            # Sanitize the output filename while preserving the directory path
+            directory = os.path.dirname(webp_path)
+            filename = os.path.basename(webp_path)
+            filename_without_ext = os.path.splitext(filename)[0]
+            sanitized_filename = self.sanitize_filename(filename_without_ext)
+            png_path = os.path.join(directory, f"{sanitized_filename}.png")
+            
+            # Handle name collisions
+            counter = 1
+            while os.path.exists(png_path):
+                png_path = os.path.join(directory, f"{sanitized_filename}_{counter}.png")
+                counter += 1
             
             if not os.path.exists(webp_path):
                 self.logger.error(f"File not found: {webp_path}")
@@ -54,7 +106,7 @@ class WebpHandler(FileSystemEventHandler):
             
             os.remove(webp_path)
             self.processed_files.add(webp_path)
-            
+
             # log just the filename for the output file
             try:
                 log_message = f"Converted: {webp_path} -> {os.path.basename(png_path)}"
@@ -202,10 +254,18 @@ def shutdown_observers(observers, _signum=None, _frame=None):
 
 def normalize_path(path):
     """Normalize path to handle Windows paths with forward/backward slashes and trailing slashes"""
-    # Strip trailing slashes and normalize slashes
-    path = os.path.normpath(path.strip())
+    # Strip any whitespace
+    path = path.strip()
+    
+    # Check if the path is just a drive letter (e.g., "C:")
+    if len(path) == 2 and path[1] == ':':
+        # Append a slash to make it the root directory
+        path = path + '\\'
+    
+    # Normalize the path
+    path = os.path.normpath(path)
+    
     return path
-
 
 def main():
     parser = argparse.ArgumentParser(
