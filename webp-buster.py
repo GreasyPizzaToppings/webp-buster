@@ -17,13 +17,11 @@ class WebpHandler(FileSystemEventHandler):
         self.recursive_mode = recursive_mode
         self.pre_conversion_path = pre_conversion_path
         self.logger = logging.getLogger(__name__)
+        self.system_folders = self._get_system_folders()
 
-    def on_created(self, event):
-        # Convert path to lowercase for case-insensitive comparison
-        path_lower = event.src_path.lower()
-        
-        # Define system and temporary folders to ignore
-        system_folders = {
+    def _get_system_folders(self):
+        """Return a set of system folders to ignore."""
+        return {
             "$recycle.bin",    # Windows Recycle Bin
             "system volume information",  # Windows System folder
             "temp",            # Temporary files
@@ -36,75 +34,97 @@ class WebpHandler(FileSystemEventHandler):
             ".tmp",            # Temporary files
             "thumbs.db",       # Windows thumbnail cache
             "desktop.ini"      # Windows folder settings
-        }
+    }
+
+    def _is_valid_webp_file(self, path):
+        """Check if the file is a valid WebP file to process."""
+        path_lower = path.lower()
+        return (not os.path.isdir(path) and 
+                path_lower.endswith(".webp") and 
+                not any(folder in path_lower for folder in self.system_folders)) 
+
+    def _generate_unique_png_path(self, base_path):
+        """Generate a unique PNG file path to avoid name collisions."""
+        directory = os.path.dirname(base_path)
+        filename = os.path.basename(base_path)
+        filename_without_ext = os.path.splitext(filename)[0]
+        sanitized_filename = self._sanitize_filename(filename_without_ext)
+        png_path = os.path.join(directory, f"{sanitized_filename}.png")
         
-        # Check if file is not in system folders and is a webp file
-        if (not event.is_directory and 
-            path_lower.endswith(".webp") and 
-            not any(folder in path_lower for folder in system_folders)):
+        counter = 1
+        while os.path.exists(png_path):
+            png_path = os.path.join(directory, f"{sanitized_filename}_{counter}.png")
+            counter += 1
+        
+        return png_path
+
+    def _convert_image(self, webp_path, png_path):
+        """Convert WebP image to PNG format."""
+        try:
+            with Image.open(webp_path) as img:
+                img.verify()
+                img = Image.open(webp_path)
+                img.save(png_path, "PNG")
+            return True
+        except Image.UnidentifiedImageError:
+            self.logger.error(f"Cannot identify image file: {webp_path}")
+        except PermissionError:
+            self.logger.error(f"Permission denied for file: {webp_path}")
+        return False
+
+    def _log_conversion(self, webp_path, png_path):
+        """Log the conversion result with proper Unicode handling."""
+        try:
+            log_message = f"Converted: {webp_path} -> {os.path.basename(png_path)}"
+            self.logger.info(log_message)
+        except UnicodeEncodeError:
+            log_message = f"Converted: {webp_path.encode('ascii', 'replace').decode()} -> {os.path.basename(png_path).encode('ascii', 'replace').decode()}"
+            self.logger.info(log_message)
+
+    def _sanitize_filename(self, filename):
+            """
+            Remove or replace problematic characters in filenames while preserving Unicode.
+            """
+            # Characters that are problematic for filesystems
+            problematic = {
+                '\0': '',       # Null byte
+                '/': '_',       # Forward slash
+                '\\': '_',      # Back slash
+                '<': '(',       # Less than
+                '>': ')',       # Greater than
+                ':': '-',       # Colon
+                '"': "'",       # Double quote
+                '|': '-',       # Pipe
+                '?': '',        # Question mark
+                '*': '',        # Asterisk
+                '\n': ' ',      # Newline
+                '\r': ' ',      # Carriage return
+                '\t': ' ',      # Tab
+            }
             
-            # Log the file being processed (useful for debugging)
+            # Replace problematic characters
+            for bad, good in problematic.items():
+                filename = filename.replace(bad, good)
+            
+            # Remove leading/trailing spaces and dots
+            filename = filename.strip('. ')
+            
+            # Ensure filename isn't empty after sanitization
+            if not filename:
+                filename = 'unnamed'
+            
+            return filename
+
+
+    def on_created(self, event):
+        if self._is_valid_webp_file(event.src_path):
             self.logger.debug(f"Processing file: {event.src_path}")
             self.convert_and_delete(event.src_path)
 
-    def sanitize_filename(self, filename):
-        """
-        Remove or replace problematic characters in filenames while preserving Unicode.
-        
-        Args:
-            filename (str): Original filename
-            
-        Returns:
-            str: Sanitized filename with problematic characters replaced
-        """
-        # Define characters that are problematic for filesystems
-        problematic = {
-            '\0': '',       # Null byte
-            '/': '_',       # Forward slash
-            '\\': '_',      # Back slash
-            '<': '(',       # Less than
-            '>': ')',       # Greater than
-            ':': '-',       # Colon
-            '"': "'",       # Double quote
-            '|': '-',       # Pipe
-            '?': '',        # Question mark
-            '*': '',        # Asterisk
-            '\n': ' ',      # Newline
-            '\r': ' ',      # Carriage return
-            '\t': ' ',      # Tab
-        }
-        
-        # Replace problematic characters
-        for bad, good in problematic.items():
-            filename = filename.replace(bad, good)
-        
-        # Remove leading/trailing spaces and dots
-        filename = filename.strip('. ')
-        
-        # Ensure filename isn't empty after sanitization
-        if not filename:
-            filename = 'unnamed'
-        
-        return filename
 
     def convert_and_delete(self, webp_path):
-        if webp_path in self.processed_files:
-            return
         try:
-            time.sleep(0.5)
-            
-            # Sanitize the output filename while preserving the directory path
-            directory = os.path.dirname(webp_path)
-            filename = os.path.basename(webp_path)
-            filename_without_ext = os.path.splitext(filename)[0]
-            sanitized_filename = self.sanitize_filename(filename_without_ext)
-            png_path = os.path.join(directory, f"{sanitized_filename}.png")
-            
-            # Handle name collisions
-            counter = 1
-            while os.path.exists(png_path):
-                png_path = os.path.join(directory, f"{sanitized_filename}_{counter}.png")
-                counter += 1
+            time.sleep(1)  # wait for file to be fully written
             
             if not os.path.exists(webp_path):
                 self.logger.error(f"File not found: {webp_path}")
@@ -114,36 +134,20 @@ class WebpHandler(FileSystemEventHandler):
                 self.logger.error(f"Empty file: {webp_path}")
                 return
             
-            try:
-                with Image.open(webp_path) as img:
-                    img.verify()
-                    img = Image.open(webp_path)
-                    img.save(png_path, "PNG")
-            except Image.UnidentifiedImageError:
-                self.logger.error(f"Cannot identify image file: {webp_path}")
-                return
-            except PermissionError:
-                self.logger.error(f"Permission denied for file: {webp_path}")
-                return
+            png_path = self._generate_unique_png_path(webp_path)
             
-            os.remove(webp_path)
-            self.processed_files.add(webp_path)
-
-            # log just the filename for the output file
-            try:
-                log_message = f"Converted: {webp_path} -> {os.path.basename(png_path)}"
-                self.logger.info(log_message)
-            except UnicodeEncodeError:
-                # Fallback to ASCII representation if Unicode fails
-                log_message = f"Converted: {webp_path.encode('ascii', 'replace').decode()} -> {os.path.basename(png_path).encode('ascii', 'replace').decode()}"
-                self.logger.info(log_message)
-        
+            if self._convert_image(webp_path, png_path):
+                os.remove(webp_path)
+                self.processed_files.add(webp_path)
+                self._log_conversion(webp_path, png_path)
+                
         except Exception as e:
             self.logger.error(
                 f"Unexpected error processing {webp_path}: {e}\n"
                 f"Error type: {type(e).__name__}\n"
                 f"Error details: {sys.exc_info()}"
             )
+
 
     def find_and_convert_existing_webps(self, start_path):
         if not self.pre_conversion_path:
@@ -154,6 +158,7 @@ class WebpHandler(FileSystemEventHandler):
                 if file.lower().endswith('.webp'):
                     full_path = os.path.join(root, file)
                     self.convert_and_delete(full_path)
+
 
 def get_available_drives():
     drives = []
@@ -169,6 +174,7 @@ def get_available_drives():
     else:  # Unix-like systems
         drives = ['/']
     return drives
+
 
 def setup_logging():
     """Set up logging with proper Unicode support."""
@@ -202,6 +208,7 @@ def setup_logging():
     logger.addHandler(stream_handler)
     
     return logger
+
 
 def monitor_system(paths_to_monitor, pre_conversion_path=None, recursive_mode=False):
     observers = []
@@ -289,6 +296,7 @@ def normalize_path(path):
     
     return path
 
+
 def main():
     parser = argparse.ArgumentParser(
         description='WebP to PNG Converter - Monitors directories and automatically converts WebP files to PNG format',
@@ -331,10 +339,11 @@ Examples:
     
     try:
         while True:
-            time.sleep(5)
+            time.sleep(1)
     # backup shutdown mechanism
     except KeyboardInterrupt:
         shutdown_observers(observers, None, None)
+
 
 if __name__ == "__main__":
     main()
