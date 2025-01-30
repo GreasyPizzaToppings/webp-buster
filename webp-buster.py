@@ -12,38 +12,79 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 class WebpHandler(FileSystemEventHandler):
-    def __init__(self, directory, recursive_mode=False, pre_conversion_path=None):
-        self.processed_files = set()
-        self.created_files = set()  # Track files we create
-        self.recursive_mode = recursive_mode
-        self.pre_conversion_path = pre_conversion_path
+
+    # System folders and patterns to ignore
+    SYSTEM_FOLDERS = {
+        # Windows system folders
+        "$recycle.bin",
+        "system volume information",
+        "temp",
+        "$windows.~ws",
+        "windowsapps",
+        "appdata",
+        "$windows.~bt",
+        "programdata",
+        "$windows.old",
+        ".tmp",
+        "thumbs.db",
+        "desktop.ini",
+
+        # Linux system folders
+        ".cache",
+        ".local/share",
+        "tracker3",
+        "gvfs-metadata",
+        "thumbnails"
+    }
+
+    def __init__(self, monitor_directory):
+        """
+        Initialize WebP handler with a directory to monitor.
+        
+        Args:
+            monitor_directory (str): Directory to monitor for new WebP files
+        """
+        self.monitor_directory = monitor_directory
+        self.webp_s = set()
+        self.created_files = set()
         self.logger = logging.getLogger(__name__)
-        self.system_folders = self._get_system_folders()
 
-    def _get_system_folders(self):
-        """Return a set of system folders and patterns to ignore."""
-        return {
-            "$recycle.bin",    # Windows Recycle Bin
-            "system volume information",  # Windows System folder
-            "temp",            # Temporary files
-            "$windows.~ws",    # Windows Update folder
-            "windowsapps",     # Windows Store apps
-            "appdata",         # Application Data
-            "$windows.~bt",    # Windows backup files
-            "programdata",     # Program Data
-            "$windows.old",    # Old Windows installation
-            ".tmp",            # Temporary files
-            "thumbs.db",       # Windows thumbnail cache
-            "desktop.ini",     # Windows folder settings
 
-            ".cache",          # Linux cache
-            ".local/share",    # Linux shared data
-            "tracker3",        # Linux tracker cache
-            "gvfs-metadata",   # Linux virtual filesystem metadata
-            "thumbnails"       # System thumbnails
-        }
+    def _is_valid_directory(self, directory_path):
+        """
+        Validate if a directory exists and is accessible.
+        """
+        try:
+            if not directory_path:
+                self.logger.error("No directory path specified")
+                return False
+                
+            if not os.path.exists(directory_path):
+                self.logger.error(f"Directory does not exist: {directory_path}")
+                return False
+                
+            if not os.path.isdir(directory_path):
+                self.logger.error(f"Path is not a directory: {directory_path}")
+                return False
+                
+            if not (os.access(directory_path, os.R_OK) and os.access(directory_path, os.W_OK)):
+                self.logger.error(f"No read and write permission for directory: {directory_path}")
+                return False
+                
+            return True
+            
+        except PermissionError as e:
+            self.logger.error(f"Permission denied accessing directory: {directory_path}. Error: {e}")
+            return False
+        except Exception as e:
+            self.logger.error(
+                f"Unexpected error validating directory {directory_path}: {e}\n"
+                f"Error type: {type(e).__name__}\n"
+                f"Error details: {sys.exc_info()}"
+            )
+            return False
 
-    def _should_process_file(self, file_path):
+    def _should_file_be_processed(self, file_path):
         """
         Determine if a file should be processed based on various criteria.
         """
@@ -60,7 +101,7 @@ class WebpHandler(FileSystemEventHandler):
 
         # Skip system and cache directories
         lower_path = file_path.lower()
-        if any(folder.lower() in lower_path for folder in self.system_folders):
+        if any(folder.lower() in lower_path for folder in self.SYSTEM_FOLDERS):
             self.logger.debug(f"Skipping system/cache path: {file_path}")
             return False
         
@@ -78,7 +119,7 @@ class WebpHandler(FileSystemEventHandler):
         """
         Check if a file is a valid WebP image by reading its header structure.
         """
-        if not self._should_process_file(file_path):
+        if not self._should_file_be_processed(file_path):
             return False
 
         time.sleep(1)  # wait for file to be fully written
@@ -258,16 +299,14 @@ class WebpHandler(FileSystemEventHandler):
             return "unnamed_file"
 
 
-    def on_created(self, event):
-        """Handle file creation events."""
-        file_path = event.src_path
+    def convert_and_delete_webp(self, webp_path):
+        """Attempt to convert a webp file to desired output and delete afterward"""
         
-        if self._is_valid_webp_file(file_path):
-            self.logger.debug(f"Processing valid WebP file: {file_path}")
-            self.convert_and_delete(file_path)
-
-
-    def convert_and_delete(self, webp_path):
+        if not self._is_valid_webp_file(webp_path):
+            return
+        
+        self.logger.debug(f"Processing valid WebP file: {webp_path}")
+            
         try:
             if not os.path.exists(webp_path):
                 #self.logger.error(f"File not found: {webp_path}")
@@ -282,7 +321,7 @@ class WebpHandler(FileSystemEventHandler):
             if self._convert_image(webp_path, png_path):
                 self.created_files.add(png_path)
                 os.remove(webp_path)
-                self.processed_files.add(webp_path)
+                self.webp_s.add(webp_path)
                 self._log_conversion(webp_path, png_path)
                 
         except Exception as e:
@@ -293,42 +332,35 @@ class WebpHandler(FileSystemEventHandler):
             )
 
 
-    def find_and_convert_existing_webps(self, start_path):
+    def on_created(self, event):
+        """Handle file creation events."""
+        self.convert_and_delete_webp(event.src_path)
+
+
+    @classmethod
+    def flush_directory(cls, directory_path):
         """
-        Recursively find and convert existing WebP files in the given directory.
+        Class method to flush (convert) all WebP files in a directory.
         
         Args:
-            start_path (str): The root directory to start searching for WebP files
+            directory_path (str): Directory to scan for existing WebP files
         """
-        if not self.pre_conversion_path:
-            self.logger.debug("No pre-conversion path specified, skipping initial conversion")
-            return
+        handler = cls(monitor_directory=None)  # Create temporary handler for flushing
         
-        try:
-            self.logger.info(f"Starting pre-conversion scan in: {self.pre_conversion_path}")
+        if not handler._is_valid_directory(directory_path):
+            return
             
-            for root, _, files in os.walk(self.pre_conversion_path):
-                # Skip system folders
-                if any(folder.lower() in root.lower() for folder in self.system_folders):
-                    self.logger.debug(f"Skipping system directory: {root}")
-                    continue
-                    
+        try:
+            handler.logger.info(f"Starting webp flush in: {directory_path}")
+            
+            for root, _, files in os.walk(directory_path):
                 for file in files:                    
                     full_path = os.path.join(root, file)
-                    
-                    # Use existing validation method
-                    if self._should_process_file(full_path):
-                        if self._is_valid_webp_file(full_path):
-                            self.logger.debug(f"Found existing WebP file to convert: {full_path}")
-                            self.convert_and_delete(full_path)
-                        else:
-                            self.logger.debug(f"Skipping invalid WebP file: {full_path}")
+                    handler.convert_and_delete_webp(full_path)
                             
-        except PermissionError as e:
-            self.logger.error(f"Permission denied accessing directory: {self.pre_conversion_path}. Error: {e}")
         except Exception as e:
-            self.logger.error(
-                f"Error during pre-conversion scan: {e}\n"
+            handler.logger.error(
+                f"Error during webp flush: {e}\n"
                 f"Error type: {type(e).__name__}\n"
                 f"Error details: {sys.exc_info()}"
             )
@@ -406,23 +438,14 @@ def setup_logging():
     return logger
 
 
-def monitor_system(paths_to_monitor, pre_conversion_path=None, recursive_mode=False):
+def monitor_system(paths_to_monitor, flush_directory=None):
     observers = []
     logger = logging.getLogger(__name__)
     
-    # Validate pre-conversion path if provided
-    if pre_conversion_path:
-        if not os.path.exists(pre_conversion_path):
-            logger.error(f"Pre-conversion path does not exist: {pre_conversion_path}")
-            sys.exit(1)
-        elif not os.path.isdir(pre_conversion_path):
-            logger.error(f"Pre-conversion path is not a directory: {pre_conversion_path}")
-            sys.exit(1)
-        else:
-            webp_handler = WebpHandler(None, recursive_mode, pre_conversion_path)
-            webp_handler.find_and_convert_existing_webps(pre_conversion_path)
+    if flush_directory:
+        WebpHandler.flush_directory(flush_directory)
     
-    # Validate and monitor paths (drives or specified paths)
+    # Set up monitoring for specified paths
     for path in paths_to_monitor:
         try:
             if not os.path.exists(path):
@@ -433,7 +456,7 @@ def monitor_system(paths_to_monitor, pre_conversion_path=None, recursive_mode=Fa
                 continue
 
             observer = Observer()
-            webp_handler = WebpHandler(path, recursive_mode)
+            webp_handler = WebpHandler(monitor_directory=path)
             
             observer.schedule(webp_handler, path, recursive=True)
             observer.start()
@@ -479,7 +502,6 @@ def shutdown_observers(observers, _signum=None, _frame=None):
 
 def normalize_path(path):
     """Normalize path to handle Windows paths with forward/backward slashes and trailing slashes"""
-    # Strip any whitespace
     path = path.strip()
     
     # Check if the path is just a drive letter (e.g., "C:")
@@ -487,10 +509,7 @@ def normalize_path(path):
         # Append a slash to make it the root directory
         path = path + '\\'
     
-    # Normalize the path
-    path = os.path.normpath(path)
-    
-    return path
+    return os.path.normpath(path)
 
 
 def main():
@@ -527,8 +546,7 @@ Examples:
     
     observers = monitor_system(
         paths_to_monitor, 
-        pre_conversion_path=args.flush, 
-        recursive_mode=bool(args.flush)  
+        flush_directory=args.flush
     )
 
     signal.signal(signal.SIGINT, lambda sig, frame: shutdown_observers(observers, sig, frame))
