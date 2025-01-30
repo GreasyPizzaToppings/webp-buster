@@ -165,38 +165,98 @@ class WebpHandler(FileSystemEventHandler):
 
 
     def _sanitize_filename(self, filename):
-            """
-            Remove or replace problematic characters in filenames while preserving Unicode.
-            """
-            # Characters that are problematic for filesystems
-            problematic = {
-                '\0': '',       # Null byte
-                '/': '_',       # Forward slash
-                '\\': '_',      # Back slash
-                '<': '(',       # Less than
-                '>': ')',       # Greater than
-                ':': '-',       # Colon
-                '"': "'",       # Double quote
-                '|': '-',       # Pipe
-                '?': '',        # Question mark
-                '*': '',        # Asterisk
-                '\n': ' ',      # Newline
-                '\r': ' ',      # Carriage return
-                '\t': ' ',      # Tab
-            }
+        """
+        Sanitize filename to be safe across operating systems, removing problematic characters
+        while preserving meaningful content.
+        """
+        if not filename:
+            return "unnamed_file"
+        
+        MAX_LENGTH = 255 
+        MIN_LENGTH = 1 
+        
+        # Reserve space for potential suffix (e.g., "_1" for duplicates)
+        EFFECTIVE_MAX_LENGTH = MAX_LENGTH - 10
+        
+        # Characters explicitly forbidden in most filesystems
+        forbidden_chars = {
+            '<': '(',
+            '>': ')',
+            ':': '-',
+            '"': "'",
+            '/': '_',
+            '\\': '_',
+            '|': '-',
+            '?': '',
+            '*': '',
+            '^': '',
+            '&': 'and',
+            '$': '',
+            '#': '',
+            '`': "'",
+            '~': '-',
+            '+': 'plus',
+            '=': 'equals',
+            '%': 'percent',
+            ';': ',',
+            '!': '',
+        }
+        
+        try:
+            sanitized = str(filename).strip()
             
-            # Replace problematic characters
-            for bad, good in problematic.items():
-                filename = filename.replace(bad, good)
+            # Replace forbidden characters
+            for bad, good in forbidden_chars.items():
+                sanitized = sanitized.replace(bad, good)
             
-            # Remove leading/trailing spaces and dots
-            filename = filename.strip('. ')
+            # Remove non-printing characters and control characters
+            sanitized = ''.join(char for char in sanitized 
+                            if char.isprintable() and ord(char) < 0xFFFF)
             
-            # Ensure filename isn't empty after sanitization
-            if not filename:
-                filename = 'unnamed'
+            # Replace multiple spaces/dots with single ones
+            sanitized = ' '.join(sanitized.split())  # Normalize spaces
+            sanitized = '.'.join(filter(None, sanitized.split('.')))  # Normalize dots
             
-            return filename
+            # Remove leading/trailing dots and spaces
+            sanitized = sanitized.strip('. ')
+            
+            # Replace any remaining unsafe characters with underscores
+            sanitized = ''.join(char if char.isalnum() or char in ' .-_(),' else '_' 
+                            for char in sanitized)
+            
+            # Ensure minimum length
+            if not sanitized or len(sanitized.strip()) < MIN_LENGTH:
+                sanitized = "unnamed_file"
+            
+            # Enforce maximum length while preserving extension
+            name_parts = sanitized.rsplit('.', 1)
+            if len(name_parts) > 1:
+                name, ext = name_parts
+                # If extension is too long, truncate it
+                ext = ext[:10] if len(ext) > 10 else ext
+                # Calculate available space for name
+                max_name_length = EFFECTIVE_MAX_LENGTH - len(ext) - 1
+                if len(name) > max_name_length:
+                    name = name[:max_name_length]
+                sanitized = f"{name}.{ext}"
+            else:
+                # No extension
+                if len(sanitized) > EFFECTIVE_MAX_LENGTH:
+                    sanitized = sanitized[:EFFECTIVE_MAX_LENGTH]
+            
+            # final cleanup of multiple dots and spaces
+            sanitized = ' '.join(sanitized.split())
+            sanitized = '.'.join(filter(None, sanitized.split('.')))
+            
+            # Ensure we don't end with a dot or space
+            sanitized = sanitized.rstrip('. ')
+            
+            return sanitized if sanitized else "unnamed_file"
+        
+        except Exception as e:
+            self.logger.error(f"Error sanitizing filename '{filename}': {e}")
+            return "unnamed_file"
+
 
     def on_created(self, event):
         """Handle file creation events."""
@@ -234,14 +294,44 @@ class WebpHandler(FileSystemEventHandler):
 
 
     def find_and_convert_existing_webps(self, start_path):
+        """
+        Recursively find and convert existing WebP files in the given directory.
+        
+        Args:
+            start_path (str): The root directory to start searching for WebP files
+        """
         if not self.pre_conversion_path:
+            self.logger.debug("No pre-conversion path specified, skipping initial conversion")
             return
         
-        for root, _, files in os.walk(self.pre_conversion_path):
-            for file in files:
-                if file.lower().endswith('.webp'):
+        try:
+            self.logger.info(f"Starting pre-conversion scan in: {self.pre_conversion_path}")
+            
+            for root, _, files in os.walk(self.pre_conversion_path):
+                # Skip system folders
+                if any(folder.lower() in root.lower() for folder in self.system_folders):
+                    self.logger.debug(f"Skipping system directory: {root}")
+                    continue
+                    
+                for file in files:                    
                     full_path = os.path.join(root, file)
-                    self.convert_and_delete(full_path)
+                    
+                    # Use existing validation method
+                    if self._should_process_file(full_path):
+                        if self._is_valid_webp_file(full_path):
+                            self.logger.debug(f"Found existing WebP file to convert: {full_path}")
+                            self.convert_and_delete(full_path)
+                        else:
+                            self.logger.debug(f"Skipping invalid WebP file: {full_path}")
+                            
+        except PermissionError as e:
+            self.logger.error(f"Permission denied accessing directory: {self.pre_conversion_path}. Error: {e}")
+        except Exception as e:
+            self.logger.error(
+                f"Error during pre-conversion scan: {e}\n"
+                f"Error type: {type(e).__name__}\n"
+                f"Error details: {sys.exc_info()}"
+            )
 
 ####
 
