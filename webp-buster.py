@@ -14,13 +14,14 @@ from watchdog.events import FileSystemEventHandler
 class WebpHandler(FileSystemEventHandler):
     def __init__(self, directory, recursive_mode=False, pre_conversion_path=None):
         self.processed_files = set()
+        self.created_files = set()  # Track files we create
         self.recursive_mode = recursive_mode
         self.pre_conversion_path = pre_conversion_path
         self.logger = logging.getLogger(__name__)
         self.system_folders = self._get_system_folders()
 
     def _get_system_folders(self):
-        """Return a set of system folders to ignore."""
+        """Return a set of system folders and patterns to ignore."""
         return {
             "$recycle.bin",    # Windows Recycle Bin
             "system volume information",  # Windows System folder
@@ -33,15 +34,95 @@ class WebpHandler(FileSystemEventHandler):
             "$windows.old",    # Old Windows installation
             ".tmp",            # Temporary files
             "thumbs.db",       # Windows thumbnail cache
-            "desktop.ini"      # Windows folder settings
-    }
+            "desktop.ini",     # Windows folder settings
 
-    def _is_valid_webp_file(self, path):
-        """Check if the file is a valid WebP file to process."""
-        path_lower = path.lower()
-        return (not os.path.isdir(path) and 
-                path_lower.endswith(".webp") and 
-                not any(folder in path_lower for folder in self.system_folders)) 
+            ".cache",          # Linux cache
+            ".local/share",    # Linux shared data
+            "tracker3",        # Linux tracker cache
+            "gvfs-metadata",   # Linux virtual filesystem metadata
+            "thumbnails"       # System thumbnails
+        }
+
+    def _should_process_file(self, file_path):
+        """
+        Determine if a file should be processed based on various criteria.
+        """
+        
+        # Skip directories
+        if os.path.isdir(file_path):
+            self.logger.debug(f"Skipping directory: {file_path}")
+            return False
+
+        # Skip if we created this file
+        if file_path in self.created_files:
+            self.logger.info(f"Skipping self-created file: {file_path}")
+            return False
+
+        # Skip system and cache directories
+        lower_path = file_path.lower()
+        if any(folder.lower() in lower_path for folder in self.system_folders):
+            self.logger.debug(f"Skipping system/cache path: {file_path}")
+            return False
+        
+        # Skip temporary files and specific patterns
+        basename = os.path.basename(lower_path)
+        if (basename.endswith('.tmp') or     # Temporary files
+            '.' in basename.split('.')[-1]): # Files with additional extensions after the main one
+            self.logger.info(f"Skipping temporary or system file: {file_path}")
+            return False
+
+        return True
+
+
+    def _is_valid_webp_file(self, file_path):
+        """
+        Check if a file is a valid WebP image by reading its header structure.
+        """
+        if not self._should_process_file(file_path):
+            return False
+
+        time.sleep(1)  # wait for file to be fully written
+
+        try:
+            with open(file_path, 'rb') as f:
+                # Read RIFF header (12 bytes)
+                header = f.read(12)
+                if len(header) < 12:
+                    self.logger.info(f"Skipping file - too short: {file_path}. Header length: {len(header)}")
+                    return False
+                
+                # Check RIFF signature
+                if header[:4] != b'RIFF':
+                    self.logger.info(f"Skipping non-WebP file: {file_path}")
+                    return False
+                    
+                # Check WEBP signature
+                if header[8:12] != b'WEBP':
+                    self.logger.info(f"Skipping non-WebP file: {file_path}")
+                    return False
+                
+                # Read chunk header (4 bytes)
+                chunk_header = f.read(4)
+                if len(chunk_header) < 4:
+                    return False
+                
+                # Verify chunk type (VP8, VP8L, or VP8X)
+                valid_chunks = {b'VP8 ', b'VP8L', b'VP8X'}
+                if chunk_header not in valid_chunks:
+                    return False
+                
+                self.logger.info(f"Valid WebP file detected: {file_path}")
+                return True
+                
+        except FileNotFoundError:
+            # Silently ignore file not found errors as they're common with temporary files
+            return False
+        except PermissionError:
+            self.logger.info(f"Permission denied: {file_path}")
+        except Exception as e:
+            self.logger.info(f"Error checking file {file_path}: {e}")
+        
+        return False
 
     def _generate_unique_png_path(self, base_path):
         """Generate a unique PNG file path to avoid name collisions."""
@@ -72,6 +153,7 @@ class WebpHandler(FileSystemEventHandler):
             self.logger.error(f"Permission denied for file: {webp_path}")
         return False
 
+
     def _log_conversion(self, webp_path, png_path):
         """Log the conversion result with proper Unicode handling."""
         try:
@@ -80,6 +162,7 @@ class WebpHandler(FileSystemEventHandler):
         except UnicodeEncodeError:
             log_message = f"Converted: {webp_path.encode('ascii', 'replace').decode()} -> {os.path.basename(png_path).encode('ascii', 'replace').decode()}"
             self.logger.info(log_message)
+
 
     def _sanitize_filename(self, filename):
             """
@@ -115,19 +198,19 @@ class WebpHandler(FileSystemEventHandler):
             
             return filename
 
-
     def on_created(self, event):
-        if self._is_valid_webp_file(event.src_path):
-            self.logger.debug(f"Processing file: {event.src_path}")
-            self.convert_and_delete(event.src_path)
+        """Handle file creation events."""
+        file_path = event.src_path
+        
+        if self._is_valid_webp_file(file_path):
+            self.logger.debug(f"Processing valid WebP file: {file_path}")
+            self.convert_and_delete(file_path)
 
 
     def convert_and_delete(self, webp_path):
         try:
-            time.sleep(1)  # wait for file to be fully written
-            
             if not os.path.exists(webp_path):
-                self.logger.error(f"File not found: {webp_path}")
+                #self.logger.error(f"File not found: {webp_path}")
                 return
             
             if os.path.getsize(webp_path) == 0:
@@ -137,6 +220,7 @@ class WebpHandler(FileSystemEventHandler):
             png_path = self._generate_unique_png_path(webp_path)
             
             if self._convert_image(webp_path, png_path):
+                self.created_files.add(png_path)
                 os.remove(webp_path)
                 self.processed_files.add(webp_path)
                 self._log_conversion(webp_path, png_path)
@@ -158,6 +242,8 @@ class WebpHandler(FileSystemEventHandler):
                 if file.lower().endswith('.webp'):
                     full_path = os.path.join(root, file)
                     self.convert_and_delete(full_path)
+
+####
 
 def get_available_drives():
     drives = []
