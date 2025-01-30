@@ -159,7 +159,6 @@ class WebpHandler(FileSystemEventHandler):
                     full_path = os.path.join(root, file)
                     self.convert_and_delete(full_path)
 
-
 def get_available_drives():
     drives = []
     if os.name == 'nt':  # Windows
@@ -172,8 +171,29 @@ def get_available_drives():
             except:
                 pass
     else:  # Unix-like systems
-        drives = ['/']
-    return drives
+        # Get all root level directories
+        try:
+            # Always include these critical paths
+            common_paths = ['/home', '/media', '/mnt']
+            drives.extend(path for path in common_paths if os.path.exists(path) and os.access(path, os.R_OK))
+            
+            ''' uncomment if you want WHOLE system monitoring
+            # Add all readable directories from root
+            for item in os.listdir('/'):
+                full_path = os.path.join('/', item)
+                if os.path.isdir(full_path) and os.access(full_path, os.R_OK):
+                    if not os.path.islink(full_path):  # Skip symbolic links
+                        drives.append(full_path)
+            '''
+        except Exception:
+            pass
+        
+        # If no paths are accessible, default to current directory
+        if not drives:
+            drives = [os.getcwd()]
+    
+    # Remove duplicates while preserving order
+    return list(dict.fromkeys(drives))
 
 
 def setup_logging():
