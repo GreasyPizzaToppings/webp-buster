@@ -320,7 +320,7 @@ class WebpHandler(FileSystemEventHandler):
             logger.error(f"Error sanitizing filename '{filename}': {e}")
             return "unnamed_file"
 
-    def convert_and_delete_webp(self, webp_path):
+    def convert_webp(self, webp_path):
         """Attempt to convert a webp file to desired output and handle cleanup"""
         if not self._is_valid_webp_file(webp_path):
             return
@@ -363,7 +363,7 @@ class WebpHandler(FileSystemEventHandler):
 
     def on_created(self, event):
         """Handle file creation events."""
-        self.convert_and_delete_webp(event.src_path)
+        self.convert_webp(event.src_path)
 
     @classmethod
     def flush_directory(cls, directory_path):
@@ -384,7 +384,7 @@ class WebpHandler(FileSystemEventHandler):
             for root, _, files in os.walk(directory_path):
                 for file in files:                    
                     full_path = os.path.join(root, file)
-                    handler.convert_and_delete_webp(full_path)
+                    handler.convert_webp(full_path)
                             
         except Exception as e:
             logger.error(
@@ -505,7 +505,7 @@ def normalize_path(path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='WebP to PNG Converter - Monitors directories and automatically converts WebP files to PNG format',
+        description='WebP Buster - Monitors directories and automatically converts WebP files to (by default) PNG format',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

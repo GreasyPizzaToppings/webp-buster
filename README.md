@@ -1,5 +1,5 @@
 # webp-buster
-Automatically converts WebP files to PNG format by monitoring directories.
+Automatically converts WebP files to PNG/JPG/BMP/TIFF format by monitoring directories.
 
 ## Requirements
 - Watchdog
@@ -11,7 +11,7 @@ Install using `pip install -r requirements.txt`
 ##  Usage
 `python webp-buster.py [-h] [-f DIR] [paths ...]`
 
-WebP to PNG Converter - Monitors directories and automatically converts WebP files to PNG format
+WebP Buster - Monitors directories and automatically converts WebP files to (by default) PNG format
 
 positional arguments:
 - `paths`              Paths to monitor for new WebP files (if none specified,
