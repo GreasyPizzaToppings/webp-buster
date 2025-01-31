@@ -341,6 +341,7 @@ class WebpHandler(FileSystemEventHandler):
                 try:
                     import shutil
                     shutil.copy2(webp_path, backup_path)
+                    self.created_files.add(backup_path)
                 except Exception as e:
                     logger.error(f"Failed to create backup of {webp_path}: {e}")
             
@@ -378,7 +379,7 @@ class WebpHandler(FileSystemEventHandler):
             return
             
         try:
-            handler.logger.info(f"Starting webp flush in: {directory_path}")
+            logger.info(f"Starting webp flush in: {directory_path}")
             
             for root, _, files in os.walk(directory_path):
                 for file in files:                    
@@ -386,7 +387,7 @@ class WebpHandler(FileSystemEventHandler):
                     handler.convert_and_delete_webp(full_path)
                             
         except Exception as e:
-            handler.logger.error(
+            logger.error(
                 f"Error during webp flush: {e}\n"
                 f"Error type: {type(e).__name__}\n"
                 f"Error details: {sys.exc_info()}"
