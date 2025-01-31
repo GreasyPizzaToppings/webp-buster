@@ -87,7 +87,7 @@ class WebpHandler(FileSystemEventHandler):
 
         # Skip if we created this file
         if file_path in self.created_files:
-            logger.info(f"Skipping self-created file: {file_path}")
+            logger.debug(f"Skipping self-created file: {file_path}")
             return False
 
         # Check file size
@@ -108,7 +108,7 @@ class WebpHandler(FileSystemEventHandler):
         basename = os.path.basename(lower_path)
         if (basename.endswith('.tmp') or     # Temporary files
             '.' in basename.split('.')[-1]): # Files with additional extensions after the main one
-            logger.info(f"Skipping temporary or system file: {file_path}")
+            logger.debug(f"Skipping temporary or system file: {file_path}")
             return False
 
         return True
@@ -120,24 +120,22 @@ class WebpHandler(FileSystemEventHandler):
         if not self._should_file_be_processed(file_path):
             return False
 
-        time.sleep(1)  # wait for file to be fully written
-
         try:
             with open(file_path, 'rb') as f:
                 # Read RIFF header (12 bytes)
                 header = f.read(12)
                 if len(header) < 12:
-                    logger.info(f"Skipping file - too short: {file_path}. Header length: {len(header)}")
+                    logger.debug(f"Skipping file - too short: {file_path}. Header length: {len(header)}")
                     return False
                 
                 # Check RIFF signature
                 if header[:4] != b'RIFF':
-                    logger.info(f"Skipping non-WebP file: {file_path}")
+                    logger.debug(f"Skipping non-WebP file: {file_path}")
                     return False
                     
                 # Check WEBP signature
                 if header[8:12] != b'WEBP':
-                    logger.info(f"Skipping non-WebP file: {file_path}")
+                    logger.debug(f"Skipping non-WebP file: {file_path}")
                     return False
                 
                 # Read chunk header (4 bytes)
@@ -150,7 +148,7 @@ class WebpHandler(FileSystemEventHandler):
                 if chunk_header not in valid_chunks:
                     return False
                 
-                logger.info(f"Valid WebP file detected: {file_path}")
+                logger.debug(f"Valid WebP file detected: {file_path}")
                 return True
                 
         except FileNotFoundError:
@@ -184,6 +182,8 @@ class WebpHandler(FileSystemEventHandler):
         The output format is specified in config.yml without the dot (e.g., 'PNG', 'JPEG', etc.)
         """
         try:
+            time.sleep(1)  # wait for file to be fully written
+
             logger.debug(f"Using output format: {self.OUTPUT_FORMAT}")  # Changed from INFO to debug
 
             # Get output format from file extension, removing the dot and converting to uppercase
