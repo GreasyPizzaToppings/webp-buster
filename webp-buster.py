@@ -3,7 +3,6 @@ import os
 import sys
 import time
 import signal
-import logging
 import string
 import ctypes
 import argparse
@@ -11,31 +10,14 @@ from PIL import Image
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
+# our modules
+from config import Config
+from logger import Logger
+
+config = Config()
+logger = Logger(config)
+
 class WebpHandler(FileSystemEventHandler):
-
-    # System folders and patterns to ignore
-    SYSTEM_FOLDERS = {
-        # Windows system folders
-        "$recycle.bin",
-        "system volume information",
-        "temp",
-        "$windows.~ws",
-        "windowsapps",
-        "appdata",
-        "$windows.~bt",
-        "programdata",
-        "$windows.old",
-        ".tmp",
-        "thumbs.db",
-        "desktop.ini",
-
-        # Linux system folders
-        ".cache",
-        ".local/share",
-        "tracker3",
-        "gvfs-metadata",
-        "thumbnails"
-    }
 
     def __init__(self, monitor_directory):
         """
@@ -47,8 +29,18 @@ class WebpHandler(FileSystemEventHandler):
         self.monitor_directory = monitor_directory
         self.webp_s = set()
         self.created_files = set()
-        self.logger = logging.getLogger(__name__)
+        config = Config()
 
+        # Load system folders from config
+        self.SYSTEM_FOLDERS = config.get('system', 'system_folders')
+        self.MAX_FILE_SIZE = config.get('system', 'max_file_size_mb') * 1024 * 1024  # Convert MB to bytes
+        self.CONVERSION_TIMEOUT = config.get('system', 'conversion_timeout_seconds')
+        
+        # Load conversion settings
+        self.DELETE_SOURCE = config.get('conversion', 'delete_source')
+        self.CREATE_BACKUP = config.get('conversion', 'create_backup')
+        self.BACKUP_EXTENSION = config.get('conversion', 'backup_extension')
+        self.OUTPUT_FORMAT = config.get('conversion', 'output_format')
 
     def _is_valid_directory(self, directory_path):
         """
@@ -56,28 +48,28 @@ class WebpHandler(FileSystemEventHandler):
         """
         try:
             if not directory_path:
-                self.logger.error("No directory path specified")
+                logger.error("No directory path specified")
                 return False
                 
             if not os.path.exists(directory_path):
-                self.logger.error(f"Directory does not exist: {directory_path}")
+                logger.error(f"Directory does not exist: {directory_path}")
                 return False
                 
             if not os.path.isdir(directory_path):
-                self.logger.error(f"Path is not a directory: {directory_path}")
+                logger.error(f"Path is not a directory: {directory_path}")
                 return False
                 
             if not (os.access(directory_path, os.R_OK) and os.access(directory_path, os.W_OK)):
-                self.logger.error(f"No read and write permission for directory: {directory_path}")
+                logger.error(f"No read and write permission for directory: {directory_path}")
                 return False
                 
             return True
             
         except PermissionError as e:
-            self.logger.error(f"Permission denied accessing directory: {directory_path}. Error: {e}")
+            logger.error(f"Permission denied accessing directory: {directory_path}. Error: {e}")
             return False
         except Exception as e:
-            self.logger.error(
+            logger.error(
                 f"Unexpected error validating directory {directory_path}: {e}\n"
                 f"Error type: {type(e).__name__}\n"
                 f"Error details: {sys.exc_info()}"
@@ -88,32 +80,38 @@ class WebpHandler(FileSystemEventHandler):
         """
         Determine if a file should be processed based on various criteria.
         """
-        
         # Skip directories
         if os.path.isdir(file_path):
-            self.logger.debug(f"Skipping directory: {file_path}")
+            logger.debug(f"Skipping directory: {file_path}")
             return False
 
         # Skip if we created this file
         if file_path in self.created_files:
-            self.logger.info(f"Skipping self-created file: {file_path}")
+            logger.info(f"Skipping self-created file: {file_path}")
+            return False
+
+        # Check file size
+        try:
+            if os.path.getsize(file_path) > self.MAX_FILE_SIZE:
+                logger.info(f"Skipping file exceeding size limit: {file_path}")
+                return False
+        except OSError:
             return False
 
         # Skip system and cache directories
         lower_path = file_path.lower()
         if any(folder.lower() in lower_path for folder in self.SYSTEM_FOLDERS):
-            self.logger.debug(f"Skipping system/cache path: {file_path}")
+            logger.debug(f"Skipping system/cache path: {file_path}")
             return False
         
         # Skip temporary files and specific patterns
         basename = os.path.basename(lower_path)
         if (basename.endswith('.tmp') or     # Temporary files
             '.' in basename.split('.')[-1]): # Files with additional extensions after the main one
-            self.logger.info(f"Skipping temporary or system file: {file_path}")
+            logger.info(f"Skipping temporary or system file: {file_path}")
             return False
 
         return True
-
 
     def _is_valid_webp_file(self, file_path):
         """
@@ -129,17 +127,17 @@ class WebpHandler(FileSystemEventHandler):
                 # Read RIFF header (12 bytes)
                 header = f.read(12)
                 if len(header) < 12:
-                    self.logger.info(f"Skipping file - too short: {file_path}. Header length: {len(header)}")
+                    logger.info(f"Skipping file - too short: {file_path}. Header length: {len(header)}")
                     return False
                 
                 # Check RIFF signature
                 if header[:4] != b'RIFF':
-                    self.logger.info(f"Skipping non-WebP file: {file_path}")
+                    logger.info(f"Skipping non-WebP file: {file_path}")
                     return False
                     
                 # Check WEBP signature
                 if header[8:12] != b'WEBP':
-                    self.logger.info(f"Skipping non-WebP file: {file_path}")
+                    logger.info(f"Skipping non-WebP file: {file_path}")
                     return False
                 
                 # Read chunk header (4 bytes)
@@ -152,58 +150,82 @@ class WebpHandler(FileSystemEventHandler):
                 if chunk_header not in valid_chunks:
                     return False
                 
-                self.logger.info(f"Valid WebP file detected: {file_path}")
+                logger.info(f"Valid WebP file detected: {file_path}")
                 return True
                 
         except FileNotFoundError:
             # Silently ignore file not found errors as they're common with temporary files
             return False
         except PermissionError:
-            self.logger.info(f"Permission denied: {file_path}")
+            logger.info(f"Permission denied: {file_path}")
         except Exception as e:
-            self.logger.info(f"Error checking file {file_path}: {e}")
+            logger.info(f"Error checking file {file_path}: {e}")
         
         return False
 
-    def _generate_unique_png_path(self, base_path):
-        """Generate a unique PNG file path to avoid name collisions."""
+    def _generate_unique_output_path(self, base_path):
+        """Generate a unique output file path to avoid name collisions."""
         directory = os.path.dirname(base_path)
         filename = os.path.basename(base_path)
         filename_without_ext = os.path.splitext(filename)[0]
         sanitized_filename = self._sanitize_filename(filename_without_ext)
-        png_path = os.path.join(directory, f"{sanitized_filename}.png")
+        output_path = os.path.join(directory, f"{sanitized_filename}{self.OUTPUT_FORMAT}")
         
         counter = 1
-        while os.path.exists(png_path):
-            png_path = os.path.join(directory, f"{sanitized_filename}_{counter}.png")
+        while os.path.exists(output_path):
+            output_path = os.path.join(directory, f"{sanitized_filename}_{counter}{self.OUTPUT_FORMAT}")
             counter += 1
         
-        return png_path
+        return output_path
 
-    def _convert_image(self, webp_path, png_path):
-        """Convert WebP image to PNG format."""
+    def _convert_image(self, webp_path, output_path):
+        """
+        Convert WebP image to the configured output format.
+        The output format is specified in config.yml without the dot (e.g., 'PNG', 'JPEG', etc.)
+        """
         try:
+            logger.debug(f"Using output format: {self.OUTPUT_FORMAT}")  # Changed from INFO to debug
+
+            # Get output format from file extension, removing the dot and converting to uppercase
+            output_format = self.OUTPUT_FORMAT.lstrip('.').upper()
+            
             with Image.open(webp_path) as img:
                 img.verify()
-                img = Image.open(webp_path)
-                img.save(png_path, "PNG")
-            return True
-        except Image.UnidentifiedImageError:
-            self.logger.error(f"Cannot identify image file: {webp_path}")
-        except PermissionError:
-            self.logger.error(f"Permission denied for file: {webp_path}")
-        return False
 
+                img = Image.open(webp_path)
+                
+                # Handle JPEG conversion specifically since it doesn't support transparency
+                if output_format == 'JPEG' or output_format == 'JPG':
+                    # Convert to RGB mode if image has transparency
+                    if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+                        background = Image.new('RGB', img.size, 'white')
+                        if img.mode == 'P':
+                            img = img.convert('RGBA')
+                        background.paste(img, mask=img.split()[-1])
+                        img = background
+                    img.save(output_path, 'JPEG', quality=95)
+                else:
+                    img.save(output_path, output_format)
+                return True
+                
+        except Image.UnidentifiedImageError:
+            logger.error(f"Cannot identify image file: {webp_path}")
+        except ValueError as e:
+            logger.error(f"Invalid or unsupported output format '{output_format}' for file: {webp_path}. Error: {e}")
+        except PermissionError:
+            logger.error(f"Permission denied for file: {webp_path}")
+        except Exception as e:
+            logger.error(f"Error converting {webp_path}: {e}")
+        return False
 
     def _log_conversion(self, webp_path, png_path):
         """Log the conversion result with proper Unicode handling."""
         try:
             log_message = f"Converted: {webp_path} -> {os.path.basename(png_path)}"
-            self.logger.info(log_message)
+            logger.info(log_message)
         except UnicodeEncodeError:
             log_message = f"Converted: {webp_path.encode('ascii', 'replace').decode()} -> {os.path.basename(png_path).encode('ascii', 'replace').decode()}"
-            self.logger.info(log_message)
-
+            logger.info(log_message)
 
     def _sanitize_filename(self, filename):
         """
@@ -295,47 +317,52 @@ class WebpHandler(FileSystemEventHandler):
             return sanitized if sanitized else "unnamed_file"
         
         except Exception as e:
-            self.logger.error(f"Error sanitizing filename '{filename}': {e}")
+            logger.error(f"Error sanitizing filename '{filename}': {e}")
             return "unnamed_file"
 
-
     def convert_and_delete_webp(self, webp_path):
-        """Attempt to convert a webp file to desired output and delete afterward"""
-        
+        """Attempt to convert a webp file to desired output and handle cleanup"""
         if not self._is_valid_webp_file(webp_path):
             return
         
-        self.logger.debug(f"Processing valid WebP file: {webp_path}")
+        logger.debug(f"Processing valid WebP file: {webp_path}")
             
         try:
             if not os.path.exists(webp_path):
-                #self.logger.error(f"File not found: {webp_path}")
                 return
             
             if os.path.getsize(webp_path) == 0:
-                self.logger.error(f"Empty file: {webp_path}")
+                logger.error(f"Empty file: {webp_path}")
                 return
             
-            png_path = self._generate_unique_png_path(webp_path)
+            # Create backup if configured
+            if self.CREATE_BACKUP:
+                backup_path = webp_path + self.BACKUP_EXTENSION
+                try:
+                    import shutil
+                    shutil.copy2(webp_path, backup_path)
+                except Exception as e:
+                    logger.error(f"Failed to create backup of {webp_path}: {e}")
             
-            if self._convert_image(webp_path, png_path):
-                self.created_files.add(png_path)
-                os.remove(webp_path)
+            output_path = self._generate_unique_output_path(webp_path)
+            
+            if self._convert_image(webp_path, output_path):
+                self.created_files.add(output_path)
+                if self.DELETE_SOURCE:
+                    os.remove(webp_path)
                 self.webp_s.add(webp_path)
-                self._log_conversion(webp_path, png_path)
+                self._log_conversion(webp_path, output_path)
                 
         except Exception as e:
-            self.logger.error(
+            logger.error(
                 f"Unexpected error processing {webp_path}: {e}\n"
                 f"Error type: {type(e).__name__}\n"
                 f"Error details: {sys.exc_info()}"
             )
 
-
     def on_created(self, event):
         """Handle file creation events."""
         self.convert_and_delete_webp(event.src_path)
-
 
     @classmethod
     def flush_directory(cls, directory_path):
@@ -403,44 +430,8 @@ def get_available_drives():
     # Remove duplicates while preserving order
     return list(dict.fromkeys(drives))
 
-
-def setup_logging():
-    """Set up logging with proper Unicode support."""
-    log_dir = os.path.join(os.path.expanduser('~'), 'WebP_Converter_Logs')
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, 'webp_converter.log')
-    
-    # Create a UTF-8 file handler
-    file_handler = logging.FileHandler(log_file, 'a', encoding='utf-8')
-    file_handler.setFormatter(logging.Formatter(
-        '%(asctime)s - %(levelname)s: %(message)s',
-        datefmt='%d-%m-%Y %H:%M'
-    ))
-    
-    # Create a stream handler that can handle Unicode
-    # Force UTF-8 encoding for Windows console
-    if os.name == 'nt':  # Windows
-        sys.stdout.reconfigure(encoding='utf-8')
-        sys.stderr.reconfigure(encoding='utf-8')
-    
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setFormatter(logging.Formatter(
-        '%(asctime)s - %(levelname)s: %(message)s',
-        datefmt='%d-%m-%Y %H:%M'
-    ))
-    
-    # Set up the root logger
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    logger.addHandler(file_handler)
-    logger.addHandler(stream_handler)
-    
-    return logger
-
-
 def monitor_system(paths_to_monitor, flush_directory=None):
     observers = []
-    logger = logging.getLogger(__name__)
     
     if flush_directory:
         WebpHandler.flush_directory(flush_directory)
@@ -483,7 +474,6 @@ def shutdown_observers(observers, _signum=None, _frame=None):
         _signum: Unused signal number (required by signal handler signature)
         _frame: Unused current stack frame (required by signal handler signature)
     """
-    logger = logging.getLogger(__name__)
     logger.info("Shutting down monitoring...")
     
     for observer in observers:
@@ -539,8 +529,6 @@ Examples:
     
     args = parser.parse_args()
 
-    setup_logging()
-    
     # monitor specified paths only when specified, otherwise monitor all drives
     paths_to_monitor = args.paths if args.paths else get_available_drives()
     
