@@ -14,6 +14,7 @@ import msvcrt
 # our modules
 from config import Config
 from logger import Logger
+from file_handler import FileHandler
 
 config = Config()
 logger = Logger(config)
@@ -161,7 +162,7 @@ class WebpHandler(FileSystemEventHandler):
         if not self._should_file_be_processed(file_path):
             return False
 
-        if not self._wait_for_file_availability(file_path):
+        if not FileHandler.is_file_available(file_path):
             logger.error(f"Timeout waiting for file to become available: {file_path}")
             return False
 
@@ -253,21 +254,6 @@ class WebpHandler(FileSystemEventHandler):
             
         return False
 
-    def _generate_unique_output_path(self, base_path):
-        """Generate a unique output file path to avoid name collisions."""
-        directory = os.path.dirname(base_path)
-        filename = os.path.basename(base_path)
-        filename_without_ext = os.path.splitext(filename)[0]
-        sanitized_filename = self._sanitize_filename(filename_without_ext)
-        output_path = os.path.join(directory, f"{sanitized_filename}{self.OUTPUT_FORMAT}")
-        
-        counter = 1
-        while os.path.exists(output_path):
-            output_path = os.path.join(directory, f"{sanitized_filename}_{counter}{self.OUTPUT_FORMAT}")
-            counter += 1
-        
-        return output_path
-
     def _convert_image(self, webp_path, output_path):
         """
         Convert WebP image to the configured output format with proper resource cleanup.
@@ -325,105 +311,13 @@ class WebpHandler(FileSystemEventHandler):
                     pass
         return False
 
-    def _sanitize_filename(self, filename):
-        """
-        Sanitize filename to be safe across operating systems, removing problematic characters
-        while preserving meaningful content.
-        """
-        if not filename:
-            return "unnamed_file"
-        
-        MAX_LENGTH = 255 
-        MIN_LENGTH = 1 
-        
-        # Reserve space for potential suffix (e.g., "_1" for duplicates)
-        EFFECTIVE_MAX_LENGTH = MAX_LENGTH - 10
-        
-        # Characters explicitly forbidden in most filesystems
-        forbidden_chars = {
-            '<': '(',
-            '>': ')',
-            ':': '-',
-            '"': "'",
-            '/': '_',
-            '\\': '_',
-            '|': '-',
-            '?': '',
-            '*': '',
-            '^': '',
-            '&': 'and',
-            '$': '',
-            '#': '',
-            '`': "'",
-            '~': '-',
-            '+': 'plus',
-            '=': 'equals',
-            '%': 'percent',
-            ';': ',',
-            '!': '',
-        }
-        
-        try:
-            sanitized = str(filename).strip()
-            
-            # Replace forbidden characters
-            for bad, good in forbidden_chars.items():
-                sanitized = sanitized.replace(bad, good)
-            
-            # Remove non-printing characters and control characters
-            sanitized = ''.join(char for char in sanitized 
-                            if char.isprintable() and ord(char) < 0xFFFF)
-            
-            # Replace multiple spaces/dots with single ones
-            sanitized = ' '.join(sanitized.split())  # Normalize spaces
-            sanitized = '.'.join(filter(None, sanitized.split('.')))  # Normalize dots
-            
-            # Remove leading/trailing dots and spaces
-            sanitized = sanitized.strip('. ')
-            
-            # Replace any remaining unsafe characters with underscores
-            sanitized = ''.join(char if char.isalnum() or char in ' .-_(),' else '_' 
-                            for char in sanitized)
-            
-            # Ensure minimum length
-            if not sanitized or len(sanitized.strip()) < MIN_LENGTH:
-                sanitized = "unnamed_file"
-            
-            # Enforce maximum length while preserving extension
-            name_parts = sanitized.rsplit('.', 1)
-            if len(name_parts) > 1:
-                name, ext = name_parts
-                # If extension is too long, truncate it
-                ext = ext[:10] if len(ext) > 10 else ext
-                # Calculate available space for name
-                max_name_length = EFFECTIVE_MAX_LENGTH - len(ext) - 1
-                if len(name) > max_name_length:
-                    name = name[:max_name_length]
-                sanitized = f"{name}.{ext}"
-            else:
-                # No extension
-                if len(sanitized) > EFFECTIVE_MAX_LENGTH:
-                    sanitized = sanitized[:EFFECTIVE_MAX_LENGTH]
-            
-            # final cleanup of multiple dots and spaces
-            sanitized = ' '.join(sanitized.split())
-            sanitized = '.'.join(filter(None, sanitized.split('.')))
-            
-            # Ensure we don't end with a dot or space
-            sanitized = sanitized.rstrip('. ')
-            
-            return sanitized if sanitized else "unnamed_file"
-        
-        except Exception as e:
-            logger.error(f"Error sanitizing filename '{filename}': {e}")
-            return "unnamed_file"
-
     def convert_webp(self, webp_path):
         """
         Attempt to convert a webp file to desired output and handle cleanup
         
         Returns: True if successful, False if not
         """
+
         if not self._is_valid_webp_file(webp_path):
             return False
         
@@ -447,8 +341,8 @@ class WebpHandler(FileSystemEventHandler):
                 except Exception as e:
                     logger.error(f"Failed to create backup of {webp_path}: {e}")
             
-            output_path = self._generate_unique_output_path(webp_path)
-            
+            output_path = FileHandler.generate_unique_output_path(webp_path, self.OUTPUT_FORMAT)
+
             if self._convert_image(webp_path, output_path):
                 self.created_files.add(output_path)
                 # Add a small delay before deletion to ensure all handles are released
