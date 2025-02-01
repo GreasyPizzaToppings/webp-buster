@@ -1,0 +1,1 @@
+python C:\tools\fuckyou\webp-buster.py %*
