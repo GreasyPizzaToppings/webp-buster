@@ -6,6 +6,7 @@ DEFAULT_CONFIG = {
     'system': {
         'system_folders': [
             '$recycle.bin',
+            'recycle.bin',
             'system volume information',
             'temp',
             '$windows.~ws',
@@ -14,6 +15,12 @@ DEFAULT_CONFIG = {
             '$windows.~bt',
             'programdata',
             '$windows.old',
+            'windows',
+            'program files',
+            'program files (x86)'
+            'amd',
+            'nvidia',
+
             '.tmp',
             'thumbs.db',
             'desktop.ini',
@@ -23,15 +30,89 @@ DEFAULT_CONFIG = {
             'gvfs-metadata',
             'thumbnails'
         ],
+
+        'image_file_extensions': [
+            '.jpg',  # JPEG image
+            '.jpeg', # JPEG image
+            '.png',  # Portable Network Graphics
+            '.gif',  # Graphics Interchange Format
+            '.bmp',  # Bitmap image
+            '.tiff', # Tagged Image File Format
+            '.tif',  # Tagged Image File Format
+            '.webp', # WebP image
+            '.raw',  # Raw image format
+            '.cr2',  # Canon RAW 2
+            '.nef',  # Nikon Electronic Format
+            '.arw',  # Sony Alpha RAW
+            '.sr2',  # Sony RAW 2
+            '.dng',  # Digital Negative
+            '.psd',  # Adobe Photoshop Document
+            '.ai',   # Adobe Illustrator Artwork
+            '.svg',  # Scalable Vector Graphics
+            '.ico',  # Icon file
+            '.heic', # High Efficiency Image Format (used by iOS)
+            '.heif', # High Efficiency Image Format
+            '.indd', # Adobe InDesign Document
+            '.eps',  # Encapsulated PostScript
+            '.pdf',  # Portable Document Format (can contain images)
+            '.xcf',  # GIMP image file
+            '.kdc',  # Kodak Digital Camera RAW
+            '.orf',  # Olympus RAW Format
+            '.raf',  # Fujifilm RAW
+            '.rw2',  # Panasonic RAW
+            '.pef',  # Pentax Electronic File
+            '.srf',  # Sony RAW Format
+            '.mrw',  # Minolta RAW
+            '.dcr',  # Kodak Digital Camera RAW
+            '.3fr',  # Hasselblad RAW
+            '.fff',  # Imacon RAW
+            '.iiq',  # Phase One RAW
+            '.rwl',  # Leica RAW
+            '.nrw',  # Nikon RAW
+            '.ptx',  # Pentax RAW
+            '.r3d',  # Redcode RAW
+            '.rwz',  # Rawzor compressed RAW
+            '.srw',  # Samsung RAW
+            '.x3f',  # Sigma RAW
+            '.erf',  # Epson RAW
+            '.mef',  # Mamiya RAW
+            '.mos',  # Leaf RAW
+            '.cap',  # Phase One RAW
+            '.cs1',  # Capture Shop 1-shot RAW
+            '.bay',  # Casio RAW
+            '.crw',  # Canon RAW
+            '.dng',  # Adobe Digital Negative
+            '.drf',  # Kodak Digital Camera RAW
+            '.dsc',  # Kodak Digital Camera RAW
+            '.k25',  # Kodak K25 RAW
+            '.kc2',  # Kodak DCS200 RAW
+            '.mdc',  # Minolta RD175 RAW
+            '.mrw',  # Minolta DiMAGE RAW
+            '.orf',  # Olympus RAW
+            '.pcd',  # Kodak Photo CD
+            '.pcx',  # PC Paintbrush Exchange
+            '.pxn',  # Logitech RAW
+            '.raf',  # Fuji RAW
+            '.raw',  # Panasonic RAW
+            '.rdc',  # Ricoh RAW
+            '.rw2',  # Panasonic RAW
+            '.sr2',  # Sony RAW
+            '.srf',  # Sony RAW
+            '.srw',  # Samsung RAW
+            '.x3f',  # Sigma RAW
+        ],
+
         'max_file_size_mb': 100,
-        'conversion_timeout_seconds': 30,
+        'conversion_timeout_seconds': 5,
         'app_directory': '~/WebP_Buster'  # New parameter for the base directory
     },
+
     'conversion': {
         'delete_source': True,
         'create_backup': False,
         'backup_extension': '.bak',
         'output_format': '.png'  # supported: png, jpeg, bmp, tiff
+    
     },
     'logging': {
         'level': 'INFO',
