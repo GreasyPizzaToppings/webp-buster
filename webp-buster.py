@@ -325,15 +325,6 @@ class WebpHandler(FileSystemEventHandler):
                     pass
         return False
 
-    def _log_conversion(self, webp_path, png_path):
-        """Log the conversion result with proper Unicode handling."""
-        try:
-            log_message = f"Converted: {webp_path} -> {os.path.basename(png_path)}"
-            logger.info(log_message)
-        except UnicodeEncodeError:
-            log_message = f"Converted: {webp_path.encode('ascii', 'replace').decode()} -> {os.path.basename(png_path).encode('ascii', 'replace').decode()}"
-            logger.info(log_message)
-
     def _sanitize_filename(self, filename):
         """
         Sanitize filename to be safe across operating systems, removing problematic characters
@@ -474,7 +465,7 @@ class WebpHandler(FileSystemEventHandler):
                             else:
                                 raise
                     self.webp_s.add(webp_path)
-                    self._log_conversion(webp_path, output_path)
+                    logger.log_conversion(webp_path, output_path)
                     return True
                     
         except Exception as e:
