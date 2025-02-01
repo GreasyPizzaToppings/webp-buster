@@ -1,4 +1,7 @@
-Pillow
-watchdog
-pyyaml
+# Core dependencies
+Pillow>=10.0.0  # For image processing (PIL)
+watchdog>=3.0.0  # For filesystem monitoring
+PyYAML>=6.0.0   # For YAML config file handling
 
+# Optional: Only needed on Windows
+# pywin32>=306 ; sys_platform == 'win32'  # For Windows-specific functionality
