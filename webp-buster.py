@@ -9,15 +9,16 @@ import argparse
 from PIL import Image
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-import msvcrt
 
 # our modules
 from config import Config
 from logger import Logger
 from file_handler import FileHandler
+from webp_converter import WebpConverter
 
 config = Config()
 logger = Logger(config)
+converter = WebpConverter(logger)
 
 class WebpHandler(FileSystemEventHandler):
 
@@ -155,170 +156,17 @@ class WebpHandler(FileSystemEventHandler):
             except OSError:
                 return False
 
-    def _is_valid_webp_file(self, file_path):
-        """
-        Check if a file is a valid WebP image by reading its header structure.
-        """
-        if not self._should_file_be_processed(file_path):
-            return False
-
-        if not FileHandler.is_file_available(file_path):
-            logger.error(f"Timeout waiting for file to become available: {file_path}")
-            return False
-
-        try:
-            with open(file_path, 'rb') as f:
-                # Read RIFF header (12 bytes)
-                header = f.read(12)
-                if len(header) < 12:
-                    logger.debug(f"Skipping file - too short: {file_path}. Header length: {len(header)}")
-                    return False
-                
-                # Check RIFF signature
-                if header[:4] != b'RIFF':
-                    logger.debug(f"Skipping non-WebP file: {file_path}")
-                    return False
-                    
-                # Check WEBP signature
-                if header[8:12] != b'WEBP':
-                    logger.debug(f"Skipping non-WebP file: {file_path}")
-                    return False
-                
-                # Read chunk header (4 bytes)
-                chunk_header = f.read(4)
-                if len(chunk_header) < 4:
-                    return False
-                
-                # Verify chunk type (VP8, VP8L, or VP8X)
-                valid_chunks = {b'VP8 ', b'VP8L', b'VP8X'}
-                if chunk_header not in valid_chunks:
-                    return False
-                
-                logger.debug(f"Valid WebP file detected: {file_path}")
-                return True
-                
-        except FileNotFoundError:
-            # Silently ignore file not found errors as they're common with temporary files
-            return False
-        except PermissionError:
-            logger.info(f"Permission denied validating file: {file_path}")
-        except Exception as e:
-            logger.info(f"Error checking file {file_path}: {e}")
-        
-        return False
-
-    def _wait_for_file_availability(self, file_path, timeout=3, initial_delay=0.1):
-        """
-        Wait for a file to become available for reading with exponential backoff.
-        
-        Args:
-            file_path: Path to the file to check
-            timeout: Maximum time to wait in seconds
-            initial_delay: Initial delay between checks in seconds
-            
-        Returns:
-            bool: True if file becomes available, False if timeout occurs
-        """
-        start_time = time.time()
-        current_delay = initial_delay
-        
-        while time.time() - start_time < timeout:
-            try:
-                # Try to open file for reading in binary mode
-                with open(file_path, 'rb') as f:
-
-                    # Try to get an exclusive lock (non-blocking)
-                    if os.name == 'nt':
-                        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-                        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
-                    else:
-                        import fcntl
-                        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                    
-                    # Check if file size is stable
-                    size1 = os.path.getsize(file_path)
-                    time.sleep(0.1)  # Brief sleep to check size stability
-                    size2 = os.path.getsize(file_path)
-                    
-                    if size1 == size2 and size1 > 0:
-                        return True
-                        
-            except (IOError, OSError) as e:
-                # File is not yet available or is locked
-                pass
-                
-            # Exponential backoff with maximum delay cap
-            time.sleep(min(current_delay, 1.0))
-            current_delay *= 2
-            
-        return False
-
-    def _convert_image(self, webp_path, output_path):
-        """
-        Convert WebP image to the configured output format with proper resource cleanup.
-        """
-        img = None
-        try:
-            if not self._wait_for_file_availability(webp_path):
-                logger.error(f"Timeout waiting for file to become available: {webp_path}")
-                return False
-
-            logger.debug(f"Using output format: {self.OUTPUT_FORMAT}")
-            output_format = self.OUTPUT_FORMAT.lstrip('.').upper()
-            
-            # First pass - verify the image
-            with Image.open(webp_path) as verify_img:
-                verify_img.verify()
-            
-            # Second pass - convert the image
-            img = Image.open(webp_path)
-            if output_format in ('JPEG', 'JPG'):
-                if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
-                    background = Image.new('RGB', img.size, 'white')
-                    if img.mode == 'P':
-                        img = img.convert('RGBA')
-                    background.paste(img, mask=img.split()[-1])
-                    img = background
-                img.save(output_path, 'JPEG', quality=95)
-            else:
-                img.save(output_path, output_format)
-                
-            # Explicitly close the image before attempting any file operations
-            if img:
-                img.close()
-            
-            # Force a garbage collection cycle to ensure resources are released
-            import gc
-            gc.collect()
-            
-            return True
-                    
-        except Image.UnidentifiedImageError:
-            logger.error(f"Cannot identify image file: {webp_path}")
-        except ValueError as e:
-            logger.error(f"Invalid or unsupported output format '{output_format}' for file: {webp_path}. Error: {e}")
-        except PermissionError:
-            logger.error(f"Permission denied for converting file: {webp_path}")
-        except Exception as e:
-            logger.error(f"Error converting {webp_path}: {e}")
-        finally:
-            # Ensure image is closed even if an error occurred
-            if img:
-                try:
-                    img.close()
-                except:
-                    pass
-        return False
-
-    def convert_webp(self, webp_path):
+    def process_webp_file(self, webp_path):
         """
         Attempt to convert a webp file to desired output and handle cleanup
         
         Returns: True if successful, False if not
         """
 
-        if not self._is_valid_webp_file(webp_path):
+        if not self._should_file_be_processed(webp_path):
+            return False
+
+        if not converter.is_webp_file(webp_path):
             return False
         
         logger.debug(f"Processing valid WebP file: {webp_path}")
@@ -341,9 +189,9 @@ class WebpHandler(FileSystemEventHandler):
                 except Exception as e:
                     logger.error(f"Failed to create backup of {webp_path}: {e}")
             
-            output_path = FileHandler.generate_unique_output_path(webp_path, self.OUTPUT_FORMAT)
+            output_path = FileHandler.generate_unique_output_path(webp_path, self.OUTPUT_FORMAT, logger)
 
-            if self._convert_image(webp_path, output_path):
+            if converter.convert_webp(webp_path, output_path):
                 self.created_files.add(output_path)
                 # Add a small delay before deletion to ensure all handles are released
                 time.sleep(0.1)
@@ -372,7 +220,7 @@ class WebpHandler(FileSystemEventHandler):
 
     def on_created(self, event):
         """Handle file creation events."""
-        self.convert_webp(event.src_path)
+        self.process_webp_file(event.src_path)
 
     @classmethod
     def flush_directory(cls, directory_path):
@@ -397,7 +245,7 @@ class WebpHandler(FileSystemEventHandler):
                     
                 for file in files:                    
                     full_path = os.path.join(root, file)
-                    if handler.convert_webp(full_path): 
+                    if handler.process_webp_file(full_path): 
                         conversion_count += 1
             logger.info(f"Flush complete: Converted {conversion_count} webp files")
 

@@ -1,11 +1,6 @@
 #! python
 import os
-import sys
 import time
-import signal
-import string
-import ctypes
-import argparse
 import msvcrt
 
 class FileHandler:
@@ -61,7 +56,7 @@ class FileHandler:
         return False
 
     @staticmethod
-    def generate_unique_output_path(base_path, output_format):
+    def generate_unique_output_path(base_path, output_format, logger):
         """
         Generate a unique output file path to avoid name collisions.
         
@@ -75,7 +70,7 @@ class FileHandler:
         directory = os.path.dirname(base_path)
         filename = os.path.basename(base_path)
         filename_without_ext = os.path.splitext(filename)[0]
-        sanitized_filename = FileHandler.sanitize_filename(filename_without_ext)
+        sanitized_filename = FileHandler.sanitize_filename(filename_without_ext, logger)
         output_path = os.path.join(directory, f"{sanitized_filename}{output_format}")
         
         counter = 1
@@ -86,7 +81,7 @@ class FileHandler:
         return output_path
 
     @staticmethod
-    def sanitize_filename(filename):
+    def sanitize_filename(filename, logger):
         """
         Sanitize filename to be safe across operating systems.
         
