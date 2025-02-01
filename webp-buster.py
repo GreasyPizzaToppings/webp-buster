@@ -70,50 +70,18 @@ class WebpBuster(FileSystemEventHandler):
                 logger.debug(f"Skipping non-image file extension: {file_extension} {file_path}")
                 return False
 
-        # Fast Windows-specific size check
-        if os.name == 'nt':
-            try:
-                import ctypes
-                from ctypes import wintypes
-                
-                class WIN32_FIND_DATAW(ctypes.Structure):
-                    _fields_ = [
-                        ("dwFileAttributes", wintypes.DWORD),
-                        ("ftCreationTime", wintypes.FILETIME),
-                        ("ftLastAccessTime", wintypes.FILETIME),
-                        ("ftLastWriteTime", wintypes.FILETIME),
-                        ("nFileSizeHigh", wintypes.DWORD),
-                        ("nFileSizeLow", wintypes.DWORD),
-                        ("dwReserved0", wintypes.DWORD),
-                        ("dwReserved1", wintypes.DWORD),
-                        ("cFileName", wintypes.WCHAR * 260),
-                        ("cAlternateFileName", wintypes.WCHAR * 14)
-                    ]
-                
-                kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
-                find_data = WIN32_FIND_DATAW()
-                handle = kernel32.FindFirstFileW(file_path, ctypes.byref(find_data))
-                if handle == -1:  # INVALID_HANDLE_VALUE
-                    logger.info(f"invalid handle value for {file_path}")
-                    return False
-                try:
-                    file_size = (find_data.nFileSizeHigh << 32) + find_data.nFileSizeLow
-                    if file_size >= self.MAX_FILE_SIZE:
-                        logger.info(f"file too big using windows api call using kernel. file {file_path}")
-                    return file_size <= self.MAX_FILE_SIZE
-                finally:
-                    kernel32.FindClose(handle)
-                    
-            except Exception as e:
-                logger.info(f"problem using kernel api technique {e}")
-                return False
-        else:
-            # Non-Windows systems - use standard method but try to be quick
-            try:
-                return (not os.path.isdir(file_path) and 
-                    os.path.getsize(file_path) <= self.MAX_FILE_SIZE)
-            except OSError:
-                return False
+        # check filesize
+        try:
+            if FileHandler.is_file_available(file_path):
+                file_size = os.path.getsize(file_path)
+                if file_size >= self.MAX_FILE_SIZE:
+                    logger.info(f"file too big: {file_path}")
+                return file_size <= self.MAX_FILE_SIZE
+            else:
+                logger.info(f"File was not available to check file size {file_path}")
+        except OSError as e:
+            logger.error(f"problem getting file size: {e}")
+            return False
 
     def process_webp_file(self, webp_path):
         """
