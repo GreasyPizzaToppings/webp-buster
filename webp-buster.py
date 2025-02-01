@@ -3,28 +3,28 @@ import os
 import sys
 import time
 import signal
-import string
-import ctypes
 import argparse
 from PIL import Image
-from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
 
 # our modules
 from config import Config
 from logger import Logger
 from file_handler import FileHandler
 from webp_converter import WebpConverter
+from directory_monitor import DirectoryMonitor
 
 config = Config()
 logger = Logger(config)
 converter = WebpConverter(logger)
+directory_monitor = DirectoryMonitor(logger)
 
-class WebpHandler(FileSystemEventHandler):
+class WebpBuster(FileSystemEventHandler):
 
     def __init__(self, monitor_directory):
         """
-        Initialize WebP handler with a directory to monitor.
+        Monitor a given directory and bust WebP files
         
         Args:
             monitor_directory (str): Directory to monitor for new WebP files
@@ -37,54 +37,12 @@ class WebpHandler(FileSystemEventHandler):
         self.SYSTEM_FOLDERS = config.get('system', 'system_folders')
         self.IMAGE_EXTENSIONS = config.get('system', 'image_file_extensions') # list of common image file extensions
         self.MAX_FILE_SIZE = config.get('system', 'max_file_size_mb') * 1024 * 1024  # Convert MB to bytes
-        self.CONVERSION_TIMEOUT = config.get('system', 'conversion_timeout_seconds')
         
         # Load conversion settings
         self.DELETE_SOURCE = config.get('conversion', 'delete_source')
         self.CREATE_BACKUP = config.get('conversion', 'create_backup')
         self.BACKUP_EXTENSION = config.get('conversion', 'backup_extension')
         self.OUTPUT_FORMAT = config.get('conversion', 'output_format')
-
-    def _is_valid_directory(self, directory_path):
-        """
-        Validate if a directory exists and is accessible.
-        """
-        try:
-            if not directory_path:
-                logger.error("No directory path specified")
-                return False
-                
-            if not os.path.exists(directory_path):
-                logger.error(f"Directory does not exist: {directory_path}")
-                return False
-                
-            if not os.path.isdir(directory_path):
-                logger.error(f"Path is not a directory: {directory_path}")
-                return False
-                
-            if not (os.access(directory_path, os.R_OK) and os.access(directory_path, os.W_OK)):
-                logger.error(f"No read and write permission for directory: {directory_path}")
-                return False
-                
-            # Skip system and cache directories
-            lower_path = directory_path.lower()
-            path_parts = lower_path.replace('\\', '/').split('/')  # normalize and split path
-            if any(folder.lower() in path_parts for folder in self.SYSTEM_FOLDERS):
-                logger.debug(f"Skipping system/cache path: {directory_path}")
-                return False
-
-            return True
-            
-        except PermissionError as e:
-            logger.error(f"Permission denied accessing directory: {directory_path}. Error: {e}")
-            return False
-        except Exception as e:
-            logger.error(
-                f"Unexpected error validating directory {directory_path}: {e}\n"
-                f"Error type: {type(e).__name__}\n"
-                f"Error details: {sys.exc_info()}"
-            )
-            return False
 
     def _should_file_be_processed(self, file_path):
         """
@@ -225,14 +183,14 @@ class WebpHandler(FileSystemEventHandler):
     @classmethod
     def flush_directory(cls, directory_path):
         """
-        Class method to flush (convert) all WebP files in a directory.
+        Pre convert all WebP files in a directory.
         
         Args:
             directory_path (str): Directory to scan for existing WebP files
         """
         handler = cls(monitor_directory=None)  # Create temporary handler for flushing
         
-        if not handler._is_valid_directory(directory_path):
+        if not directory_monitor.is_valid_directory(directory_path):
             return
                 
         try:
@@ -241,7 +199,7 @@ class WebpHandler(FileSystemEventHandler):
 
             for root, dirs, files in os.walk(directory_path, topdown=True):
                 # Modify dirs in place to skip system directories
-                dirs[:] = [d for d in dirs if handler._is_valid_directory(os.path.join(root, d))]
+                dirs[:] = [d for d in dirs if directory_monitor.is_valid_directory(os.path.join(root, d))]
                     
                 for file in files:                    
                     full_path = os.path.join(root, file)
@@ -257,77 +215,6 @@ class WebpHandler(FileSystemEventHandler):
             )   
 
 ####
-
-def get_available_drives():
-    drives = []
-    if os.name == 'nt':  # Windows
-        for letter in string.ascii_uppercase:
-            drive = f"{letter}:\\"
-            try:
-                if os.path.exists(drive):
-                    ctypes.windll.kernel32.GetDiskFreeSpaceExW(drive, None, None, None)
-                    drives.append(drive)
-            except:
-                pass
-    else:  # Unix-like systems
-        # Get all root level directories
-        try:
-            # Always include these critical paths
-            common_paths = ['/home', '/media', '/mnt']
-            drives.extend(path for path in common_paths if os.path.exists(path) and os.access(path, os.R_OK))
-            
-            ''' uncomment if you want WHOLE system monitoring
-            # Add all readable directories from root
-            for item in os.listdir('/'):
-                full_path = os.path.join('/', item)
-                if os.path.isdir(full_path) and os.access(full_path, os.R_OK):
-                    if not os.path.islink(full_path):  # Skip symbolic links
-                        drives.append(full_path)
-            '''
-        except Exception:
-            pass
-        
-        # If no paths are accessible, default to current directory
-        if not drives:
-            drives = [os.getcwd()]
-    
-    # Remove duplicates while preserving order
-    return list(dict.fromkeys(drives))
-
-def monitor_system(paths_to_monitor, flush_directory=None):
-    observers = []
-    
-    if flush_directory:
-        WebpHandler.flush_directory(flush_directory)
-    
-    # Set up monitoring for specified paths
-    for path in paths_to_monitor:
-        try:
-            if not os.path.exists(path):
-                logger.error(f"Path does not exist: {path}")
-                continue
-            elif not os.path.isdir(path):
-                logger.error(f"Path is not a directory: {path}")
-                continue
-
-            observer = Observer()
-            webp_handler = WebpHandler(monitor_directory=path)
-            
-            observer.schedule(webp_handler, path, recursive=True)
-            observer.start()
-            observers.append(observer)
-            logger.info(f"Successfully monitoring {path}")
-
-        except PermissionError as e:
-            logger.error(f"Permission error monitoring {path}: {e}")
-        except Exception as e:
-            logger.error(f"Detailed error monitoring {path}: {e}")
-
-    if not observers:
-        logger.error("No valid paths to monitor. Shutting down.")
-        sys.exit(1)
-
-    return observers
 
 
 def shutdown_observers(observers, _signum=None, _frame=None):
@@ -353,6 +240,40 @@ def shutdown_observers(observers, _signum=None, _frame=None):
     logger.info("Clean shutdown complete")
     sys.exit(0)
 
+def monitor_directories(paths_to_monitor):
+    """
+        Setup WebpHandlers for each directory to monitor
+    """
+    observers = []
+    
+    # Set up monitoring for specified paths
+    for path in paths_to_monitor:
+        try:
+            if not os.path.exists(path):
+                logger.error(f"Path does not exist: {path}")
+                continue
+            elif not os.path.isdir(path):
+                logger.error(f"Path is not a directory: {path}")
+                continue
+
+            observer = Observer()
+            webp_handler = WebpBuster(monitor_directory=path)
+            
+            observer.schedule(webp_handler, path, recursive=True)
+            observer.start()
+            observers.append(observer)
+            logger.info(f"Successfully monitoring {path}")
+
+        except PermissionError as e:
+            logger.error(f"Permission error monitoring {path}: {e}")
+        except Exception as e:
+            logger.error(f"Detailed error monitoring {path}: {e}")
+
+    if not observers:
+        logger.error("No valid paths to monitor. Shutting down.")
+        sys.exit(1)
+
+    return observers
 
 def normalize_path(path):
     """Normalize path to handle Windows paths with forward/backward slashes and trailing slashes"""
@@ -364,7 +285,6 @@ def normalize_path(path):
         path = path + '\\'
     
     return os.path.normpath(path)
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -393,19 +313,18 @@ Examples:
     
     args = parser.parse_args()
 
+    #flush out a directory if specified one
+    if args.flush: WebpBuster.flush_directory(args.flush)
+
     # monitor specified paths only when specified, otherwise monitor all drives
-    paths_to_monitor = args.paths if args.paths else get_available_drives()
-    
-    observers = monitor_system(
-        paths_to_monitor, 
-        flush_directory=args.flush
-    )
+    paths_to_monitor = args.paths if args.paths else DirectoryMonitor.get_available_drives()
+    observers = monitor_directories(paths_to_monitor)
 
     signal.signal(signal.SIGINT, lambda sig, frame: shutdown_observers(observers, sig, frame))
     
     try:
         while True:
-            time.sleep(10)
+            time.sleep(1)
     # backup shutdown mechanism
     except KeyboardInterrupt:
         shutdown_observers(observers, None, None)

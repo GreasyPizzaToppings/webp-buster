@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from logging.handlers import RotatingFileHandler
 
@@ -49,3 +50,12 @@ class Logger:
     def __getattr__(self, name):
         """Delegate logging methods to internal logger"""
         return getattr(self.logger, name)
+
+    def log_conversion(self, webp_path, png_path):
+        """Log the conversion result with proper Unicode handling."""
+        try:
+            log_message = f"Converted: {webp_path} -> {os.path.basename(png_path)}"
+            self.logger.info(log_message)
+        except UnicodeEncodeError:
+            log_message = f"Converted: {webp_path.encode('ascii', 'replace').decode()} -> {os.path.basename(png_path).encode('ascii', 'replace').decode()}"
+            self.logger.info(log_message)
