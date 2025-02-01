@@ -32,7 +32,6 @@ class WebpBuster(FileSystemEventHandler):
         self.monitor_directory = monitor_directory
         self.webp_s = set()
         self.created_files = set()
-        config = Config()
 
         self.SYSTEM_FOLDERS = config.get('system', 'system_folders')
         self.IMAGE_EXTENSIONS = config.get('system', 'image_file_extensions') # list of common image file extensions
