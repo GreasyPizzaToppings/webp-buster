@@ -1,4 +1,4 @@
-import os
+#! python
 from PIL import Image
 
 from file_handler import FileHandler

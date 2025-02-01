@@ -1,9 +1,10 @@
-import os
+#! python
 import yaml
 from pathlib import Path
 
 DEFAULT_CONFIG = {
     'system': {
+        #folders to ignore
         'system_folders': [
             '$recycle.bin',
             'recycle.bin',
