@@ -10,7 +10,6 @@ from PIL import Image
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import msvcrt
-import gc
 
 # our modules
 from config import Config
@@ -33,8 +32,8 @@ class WebpHandler(FileSystemEventHandler):
         self.created_files = set()
         config = Config()
 
-        # Load system folders from config
         self.SYSTEM_FOLDERS = config.get('system', 'system_folders')
+        self.IMAGE_EXTENSIONS = config.get('system', 'image_file_extensions') # list of common image file extensions
         self.MAX_FILE_SIZE = config.get('system', 'max_file_size_mb') * 1024 * 1024  # Convert MB to bytes
         self.CONVERSION_TIMEOUT = config.get('system', 'conversion_timeout_seconds')
         
@@ -67,8 +66,9 @@ class WebpHandler(FileSystemEventHandler):
                 
             # Skip system and cache directories
             lower_path = directory_path.lower()
-            if any(folder.lower() in lower_path for folder in self.SYSTEM_FOLDERS):
-                logger.info(f"Skipping system/cache path: {directory_path}")
+            path_parts = lower_path.replace('\\', '/').split('/')  # normalize and split path
+            if any(folder.lower() in path_parts for folder in self.SYSTEM_FOLDERS):
+                logger.debug(f"Skipping system/cache path: {directory_path}")
                 return False
 
             return True
@@ -84,90 +84,75 @@ class WebpHandler(FileSystemEventHandler):
             )
             return False
 
-    def _wait_for_file_availability(self, file_path, timeout=3, initial_delay=0.1):
-        """
-        Wait for a file to become available for reading with exponential backoff.
-        
-        Args:
-            file_path: Path to the file to check
-            timeout: Maximum time to wait in seconds
-            initial_delay: Initial delay between checks in seconds
-            
-        Returns:
-            bool: True if file becomes available, False if timeout occurs
-        """
-        start_time = time.time()
-        current_delay = initial_delay
-        
-        while time.time() - start_time < timeout:
-            try:
-                # Try to open file for reading in binary mode
-                with open(file_path, 'rb') as f:
-
-                    # Try to get an exclusive lock (non-blocking)
-                    if os.name == 'nt':
-                        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-                        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
-                    else:
-                        import fcntl
-                        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                    
-                    # Check if file size is stable
-                    size1 = os.path.getsize(file_path)
-                    time.sleep(0.1)  # Brief sleep to check size stability
-                    size2 = os.path.getsize(file_path)
-                    
-                    if size1 == size2 and size1 > 0:
-                        return True
-                        
-            except (IOError, OSError) as e:
-                # File is not yet available or is locked
-                pass
-                
-            # Exponential backoff with maximum delay cap
-            time.sleep(min(current_delay, 1.0))
-            current_delay *= 2
-            
-        return False
-
     def _should_file_be_processed(self, file_path):
         """
         Determine if a file should be processed based on various criteria.
+        Optimized to perform fastest checks first.
         """
-
-        # Skip directories
-        if os.path.isdir(file_path):
-            logger.debug(f"Skipping directory: {file_path}")
-            return False
-
-        # Skip if we created this file
+        # Skip if we created this file (in-memory check)
         if file_path in self.created_files:
             logger.debug(f"Skipping self-created file: {file_path}")
             return False
 
-        # Check file size
-        try:
-            if os.path.getsize(file_path) > self.MAX_FILE_SIZE:
-                logger.info(f"Skipping file exceeding size limit: {file_path}")
-                return False
-        except OSError:
-            return False
-
         # Skip system and cache directories
         lower_path = file_path.lower()
-        if any(folder.lower() in lower_path for folder in self.SYSTEM_FOLDERS):
+        path_parts = lower_path.replace('\\', '/').split('/')  # normalize and split path
+        if any(folder.lower() in path_parts for folder in self.SYSTEM_FOLDERS):
             logger.debug(f"Skipping system/cache path: {file_path}")
             return False
-        
-        # Skip files with specific type endings
-        basename = os.path.basename(lower_path)
-        if (basename.endswith('.tmp') or basename.endswith('.exe') or basename.endswith('.log') or
-            '.' in basename.split('.')[-1]): # Files with additional extensions after the main one
-            logger.debug(f"Skipping temporary or system file: {file_path}")
+
+        # Check if the extension is in the allowed list (images usually have an image extension)
+        # allow no extension
+        file_parts = file_path.lower().rsplit('.', 1)
+        file_extension = f".{file_parts[-1]}"
+        if len(file_parts) > 1 and file_extension not in self.IMAGE_EXTENSIONS:
+            logger.debug(f"Skipping non-image file extension: {file_extension} {file_path}")
             return False
 
-        return True
+        # Fast Windows-specific size check
+        if os.name == 'nt':
+            try:
+                import ctypes
+                from ctypes import wintypes
+                
+                class WIN32_FIND_DATAW(ctypes.Structure):
+                    _fields_ = [
+                        ("dwFileAttributes", wintypes.DWORD),
+                        ("ftCreationTime", wintypes.FILETIME),
+                        ("ftLastAccessTime", wintypes.FILETIME),
+                        ("ftLastWriteTime", wintypes.FILETIME),
+                        ("nFileSizeHigh", wintypes.DWORD),
+                        ("nFileSizeLow", wintypes.DWORD),
+                        ("dwReserved0", wintypes.DWORD),
+                        ("dwReserved1", wintypes.DWORD),
+                        ("cFileName", wintypes.WCHAR * 260),
+                        ("cAlternateFileName", wintypes.WCHAR * 14)
+                    ]
+                
+                kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+                find_data = WIN32_FIND_DATAW()
+                handle = kernel32.FindFirstFileW(file_path, ctypes.byref(find_data))
+                if handle == -1:  # INVALID_HANDLE_VALUE
+                    logger.info(f"invalid handle value for {file_path}")
+                    return False
+                try:
+                    file_size = (find_data.nFileSizeHigh << 32) + find_data.nFileSizeLow
+                    if file_size >= self.MAX_FILE_SIZE:
+                        logger.info(f"file too big using windows api call using kernel. file {file_path}")
+                    return file_size <= self.MAX_FILE_SIZE
+                finally:
+                    kernel32.FindClose(handle)
+                    
+            except Exception as e:
+                logger.info(f"problem using kernel api technique {e}")
+                return False
+        else:
+            # Non-Windows systems - use standard method but try to be quick
+            try:
+                return (not os.path.isdir(file_path) and 
+                    os.path.getsize(file_path) <= self.MAX_FILE_SIZE)
+            except OSError:
+                return False
 
     def _is_valid_webp_file(self, file_path):
         """
@@ -219,6 +204,53 @@ class WebpHandler(FileSystemEventHandler):
         except Exception as e:
             logger.info(f"Error checking file {file_path}: {e}")
         
+        return False
+
+    def _wait_for_file_availability(self, file_path, timeout=3, initial_delay=0.1):
+        """
+        Wait for a file to become available for reading with exponential backoff.
+        
+        Args:
+            file_path: Path to the file to check
+            timeout: Maximum time to wait in seconds
+            initial_delay: Initial delay between checks in seconds
+            
+        Returns:
+            bool: True if file becomes available, False if timeout occurs
+        """
+        start_time = time.time()
+        current_delay = initial_delay
+        
+        while time.time() - start_time < timeout:
+            try:
+                # Try to open file for reading in binary mode
+                with open(file_path, 'rb') as f:
+
+                    # Try to get an exclusive lock (non-blocking)
+                    if os.name == 'nt':
+                        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    
+                    # Check if file size is stable
+                    size1 = os.path.getsize(file_path)
+                    time.sleep(0.1)  # Brief sleep to check size stability
+                    size2 = os.path.getsize(file_path)
+                    
+                    if size1 == size2 and size1 > 0:
+                        return True
+                        
+            except (IOError, OSError) as e:
+                # File is not yet available or is locked
+                pass
+                
+            # Exponential backoff with maximum delay cap
+            time.sleep(min(current_delay, 1.0))
+            current_delay *= 2
+            
         return False
 
     def _generate_unique_output_path(self, base_path):
