@@ -1,7 +1,6 @@
 #! python
 import os
 import time
-import msvcrt
 
 class FileHandler:
     """
@@ -30,6 +29,7 @@ class FileHandler:
                 with open(file_path, 'rb') as f:
                     # Try to get an exclusive lock (non-blocking)
                     if os.name == 'nt':
+                        import msvcrt
                         msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
                         msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
                     else:

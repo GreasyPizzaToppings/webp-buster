@@ -60,13 +60,15 @@ class WebpBuster(FileSystemEventHandler):
             logger.debug(f"Skipping system/cache path: {file_path}")
             return False
 
-        # Check if the extension is in the allowed list (images usually have an image extension)
-        # allow no extension
-        file_parts = file_path.lower().rsplit('.', 1)
-        file_extension = f".{file_parts[-1]}"
-        if len(file_parts) > 1 and file_extension not in self.IMAGE_EXTENSIONS:
-            logger.debug(f"Skipping non-image file extension: {file_extension} {file_path}")
-            return False
+        filename = os.path.basename(file_path)
+
+        if '.' in filename:
+            # Split from the right once to get the extension
+            file_extension = f".{filename.lower().split('.')[-1]}"
+
+            if file_extension not in self.IMAGE_EXTENSIONS:
+                logger.debug(f"Skipping non-image file extension: {file_extension} {file_path}")
+                return False
 
         # Fast Windows-specific size check
         if os.name == 'nt':

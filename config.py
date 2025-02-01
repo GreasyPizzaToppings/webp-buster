@@ -25,10 +25,11 @@ DEFAULT_CONFIG = {
             'thumbs.db',
             'desktop.ini',
             '.cache',
-            '.local/share',
+            '.local',
             'tracker3',
             'gvfs-metadata',
-            'thumbnails'
+            'thumbnails',
+            'trash'
         ],
 
         'image_file_extensions': [
