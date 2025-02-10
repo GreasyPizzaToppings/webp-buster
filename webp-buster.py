@@ -72,7 +72,9 @@ class WebpBuster(FileSystemEventHandler):
 
         # check filesize
         try:
-            if FileHandler.is_file_available(file_path):
+            # Don't check for constant file size when flushing (monitor_directory is None)
+            check_constant_size = self.monitor_directory is not None
+            if FileHandler.is_file_available(file_path, check_constant_size=check_constant_size):
                 file_size = os.path.getsize(file_path)
                 if file_size >= self.MAX_FILE_SIZE:
                     logger.info(f"file too big: {file_path}")
@@ -90,13 +92,15 @@ class WebpBuster(FileSystemEventHandler):
         Returns: True if successful, False if not
         """
 
+        logger.debug(f"checking file: {webp_path}")
+
         if not self._should_file_be_processed(webp_path):
             return False
 
         if not converter.is_webp_file(webp_path):
             return False
         
-        logger.debug(f"Processing valid WebP file: {webp_path}")
+        logger.debug(f"file confirmed to be webp: {webp_path}")
                 
         try:
             if not os.path.exists(webp_path):
@@ -158,7 +162,7 @@ class WebpBuster(FileSystemEventHandler):
             directory_path (str): Directory to scan for existing WebP files
         """
         handler = cls(monitor_directory=None)  # Create temporary handler for flushing
-        
+
         if not directory_monitor.is_valid_directory(directory_path):
             return
                 

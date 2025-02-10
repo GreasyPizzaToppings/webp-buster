@@ -8,7 +8,7 @@ class FileHandler:
     """
 
     @staticmethod
-    def is_file_available(file_path, timeout=3, initial_delay=0.1):
+    def is_file_available(file_path, timeout=3, initial_delay=0.1, file_size_delay=0.1, check_constant_size=True):
         """
         Wait for a file to become available for reading with exponential backoff.
         
@@ -16,13 +16,15 @@ class FileHandler:
             file_path: Path to the file to check
             timeout: Maximum time to wait in seconds
             initial_delay: Initial delay between checks in seconds
+            file_size_delay: The delay used to check if filesize is stable
+            check_constant_size: Whether to verify file size remains constant
             
         Returns:
             bool: True if file becomes available, False if timeout occurs
         """
         start_time = time.time()
         current_delay = initial_delay
-        
+
         while time.time() - start_time < timeout:
             try:
                 # Try to open file for reading in binary mode
@@ -37,14 +39,19 @@ class FileHandler:
                         fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                         fcntl.flock(f.fileno(), fcntl.LOCK_UN)
                     
-                    # Check if file size is stable
                     size1 = os.path.getsize(file_path)
-                    time.sleep(0.1)  # Brief sleep to check size stability
-                    size2 = os.path.getsize(file_path)
+                    if size1 <= 0:
+                        continue  # Skip to next iteration if file is empty
                     
-                    if size1 == size2 and size1 > 0:
+                    if not check_constant_size:
                         return True
-                        
+                    
+                    # Check if file size is stable
+                    time.sleep(file_size_delay)
+                    size2 = os.path.getsize(file_path)
+                    if size1 == size2:
+                        return True
+                    
             except (IOError, OSError):
                 # File is not yet available or is locked
                 pass

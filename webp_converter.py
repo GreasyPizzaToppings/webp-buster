@@ -59,10 +59,6 @@ class WebpConverter:
         Check if a file is a valid WebP image by reading its header structure.
         """
 
-        if not FileHandler.is_file_available(file_path):
-            self.logger.error(f"Timeout waiting for file to become available: {file_path}")
-            return False
-
         try:
             with open(file_path, 'rb') as f:
                 # Read RIFF header (12 bytes)
